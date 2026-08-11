@@ -1,0 +1,459 @@
+{
+  "provenance": {
+    "energyplus_version": "EnergyPlus (version extracted from simulation)",
+    "source_idf": "5ZoneAirCooled.idf",
+    "weather_file": "USA_IL_Chicago-OHare_TMY3.epw",
+    "timestamp": "2026-08-10T19:29:22.952434",
+    "study_type": "2^3 full-factorial"
+  },
+  "factors": {
+    "A": {
+      "name": "WF-1 Window Area",
+      "levels": [
+        "baseline",
+        "75%"
+      ]
+    },
+    "B": {
+      "name": "Main South Overhang Depth",
+      "levels": [
+        "1.3m",
+        "2.0m"
+      ]
+    },
+    "C": {
+      "name": "IN02 Insulation Thickness",
+      "levels": [
+        "0.090099998m",
+        "0.14m"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": 1,
+      "name": "baseline",
+      "A": "-",
+      "B": "-",
+      "C": "-"
+    },
+    {
+      "id": 2,
+      "name": "A+",
+      "A": "+",
+      "B": "-",
+      "C": "-"
+    },
+    {
+      "id": 3,
+      "name": "B+",
+      "A": "-",
+      "B": "+",
+      "C": "-"
+    },
+    {
+      "id": 4,
+      "name": "AB+",
+      "A": "+",
+      "B": "+",
+      "C": "-"
+    },
+    {
+      "id": 5,
+      "name": "C+",
+      "A": "-",
+      "B": "-",
+      "C": "+"
+    },
+    {
+      "id": 6,
+      "name": "AC+",
+      "A": "+",
+      "B": "-",
+      "C": "+"
+    },
+    {
+      "id": 7,
+      "name": "BC+",
+      "A": "-",
+      "B": "+",
+      "C": "+"
+    },
+    {
+      "id": 8,
+      "name": "ABC+",
+      "A": "+",
+      "B": "+",
+      "C": "+"
+    }
+  ],
+  "raw_results": [
+    {
+      "case_id": 1,
+      "case_name": "baseline",
+      "factors": {
+        "A": "-",
+        "B": "-",
+        "C": "-"
+      },
+      "metrics": {
+        "total_site_energy_GJ": 225.1,
+        "electricity_GJ": 156.64,
+        "natural_gas_GJ": 68.47,
+        "cooling_electricity_GJ": 16.43,
+        "heating_natural_gas_GJ": 68.47
+      }
+    },
+    {
+      "case_id": 2,
+      "case_name": "A+",
+      "factors": {
+        "A": "+",
+        "B": "-",
+        "C": "-"
+      },
+      "metrics": {
+        "total_site_energy_GJ": 224.5,
+        "electricity_GJ": 156.47,
+        "natural_gas_GJ": 68.03,
+        "cooling_electricity_GJ": 16.34,
+        "heating_natural_gas_GJ": 68.03
+      }
+    },
+    {
+      "case_id": 3,
+      "case_name": "B+",
+      "factors": {
+        "A": "-",
+        "B": "+",
+        "C": "-"
+      },
+      "metrics": {
+        "total_site_energy_GJ": 225.57,
+        "electricity_GJ": 156.41,
+        "natural_gas_GJ": 69.15,
+        "cooling_electricity_GJ": 16.26,
+        "heating_natural_gas_GJ": 69.15
+      }
+    },
+    {
+      "case_id": 4,
+      "case_name": "AB+",
+      "factors": {
+        "A": "+",
+        "B": "+",
+        "C": "-"
+      },
+      "metrics": {
+        "total_site_energy_GJ": 224.89,
+        "electricity_GJ": 156.27,
+        "natural_gas_GJ": 68.63,
+        "cooling_electricity_GJ": 16.18,
+        "heating_natural_gas_GJ": 68.63
+      }
+    },
+    {
+      "case_id": 5,
+      "case_name": "C+",
+      "factors": {
+        "A": "-",
+        "B": "-",
+        "C": "+"
+      },
+      "metrics": {
+        "total_site_energy_GJ": 221.92,
+        "electricity_GJ": 156.07,
+        "natural_gas_GJ": 65.86,
+        "cooling_electricity_GJ": 16.13,
+        "heating_natural_gas_GJ": 65.86
+      }
+    },
+    {
+      "case_id": 6,
+      "case_name": "AC+",
+      "factors": {
+        "A": "+",
+        "B": "-",
+        "C": "+"
+      },
+      "metrics": {
+        "total_site_energy_GJ": 221.32,
+        "electricity_GJ": 155.89,
+        "natural_gas_GJ": 65.42,
+        "cooling_electricity_GJ": 16.03,
+        "heating_natural_gas_GJ": 65.42
+      }
+    },
+    {
+      "case_id": 7,
+      "case_name": "BC+",
+      "factors": {
+        "A": "-",
+        "B": "+",
+        "C": "+"
+      },
+      "metrics": {
+        "total_site_energy_GJ": 222.36,
+        "electricity_GJ": 155.85,
+        "natural_gas_GJ": 66.51,
+        "cooling_electricity_GJ": 15.97,
+        "heating_natural_gas_GJ": 66.51
+      }
+    },
+    {
+      "case_id": 8,
+      "case_name": "ABC+",
+      "factors": {
+        "A": "+",
+        "B": "+",
+        "C": "+"
+      },
+      "metrics": {
+        "total_site_energy_GJ": 221.69,
+        "electricity_GJ": 155.69,
+        "natural_gas_GJ": 66.0,
+        "cooling_electricity_GJ": 15.88,
+        "heating_natural_gas_GJ": 66.0
+      }
+    }
+  ],
+  "factorial_analysis": {
+    "total_site_energy_GJ": {
+      "baseline_value": 225.1,
+      "effects": {
+        "A": -0.6375000000000028,
+        "B": 0.417500000000004,
+        "C": -3.1924999999999955,
+        "AB": -0.037500000000008527,
+        "AC": 0.0024999999999977263,
+        "BC": -0.012499999999988631,
+        "ABC": 0.0024999999999977263
+      },
+      "changes_vs_baseline": {
+        "baseline": {
+          "absolute": 0.0,
+          "percent": 0.0
+        },
+        "A+": {
+          "absolute": -0.5999999999999943,
+          "percent": -0.2665482007996421
+        },
+        "B+": {
+          "absolute": 0.46999999999999886,
+          "percent": 0.20879609062638776
+        },
+        "AB+": {
+          "absolute": -0.21000000000000796,
+          "percent": -0.09329187027987915
+        },
+        "C+": {
+          "absolute": -3.180000000000007,
+          "percent": -1.4127054642381196
+        },
+        "AC+": {
+          "absolute": -3.780000000000001,
+          "percent": -1.6792536650377616
+        },
+        "BC+": {
+          "absolute": -2.7399999999999807,
+          "percent": -1.217236783651702
+        },
+        "ABC+": {
+          "absolute": -3.4099999999999966,
+          "percent": -1.5148822745446453
+        }
+      }
+    },
+    "electricity_GJ": {
+      "baseline_value": 156.64,
+      "effects": {
+        "A": -0.16249999999999432,
+        "B": -0.21249999999999147,
+        "C": -0.5725000000000051,
+        "AB": 0.012500000000002842,
+        "AC": -0.00750000000000739,
+        "BC": 0.0024999999999977263,
+        "ABC": -0.0024999999999977263
+      },
+      "changes_vs_baseline": {
+        "baseline": {
+          "absolute": 0.0,
+          "percent": 0.0
+        },
+        "A+": {
+          "absolute": -0.1699999999999875,
+          "percent": -0.10852911133809214
+        },
+        "B+": {
+          "absolute": -0.22999999999998977,
+          "percent": -0.14683350357507008
+        },
+        "AB+": {
+          "absolute": -0.3699999999999761,
+          "percent": -0.23621041879467322
+        },
+        "C+": {
+          "absolute": -0.5699999999999932,
+          "percent": -0.3638917262512725
+        },
+        "AC+": {
+          "absolute": -0.75,
+          "percent": -0.47880490296220635
+        },
+        "BC+": {
+          "absolute": -0.789999999999992,
+          "percent": -0.504341164453519
+        },
+        "ABC+": {
+          "absolute": -0.9499999999999886,
+          "percent": -0.6064862104187875
+        }
+      }
+    },
+    "natural_gas_GJ": {
+      "baseline_value": 68.47,
+      "effects": {
+        "A": -0.4775000000000027,
+        "B": 0.6275000000000013,
+        "C": -2.6224999999999987,
+        "AB": -0.037500000000004974,
+        "AC": 0.002500000000001279,
+        "BC": -0.01249999999999929,
+        "ABC": 0.002500000000001279
+      },
+      "changes_vs_baseline": {
+        "baseline": {
+          "absolute": 0.0,
+          "percent": 0.0
+        },
+        "A+": {
+          "absolute": -0.4399999999999977,
+          "percent": -0.6426172046151566
+        },
+        "B+": {
+          "absolute": 0.6800000000000068,
+          "percent": 0.9931356798598026
+        },
+        "AB+": {
+          "absolute": 0.1599999999999966,
+          "percent": 0.23367898349641683
+        },
+        "C+": {
+          "absolute": -2.6099999999999994,
+          "percent": -3.81188841828538
+        },
+        "AC+": {
+          "absolute": -3.049999999999997,
+          "percent": -4.454505622900537
+        },
+        "BC+": {
+          "absolute": -1.9599999999999937,
+          "percent": -2.8625675478311576
+        },
+        "ABC+": {
+          "absolute": -2.469999999999999,
+          "percent": -3.6074193077260097
+        }
+      }
+    },
+    "cooling_electricity_GJ": {
+      "baseline_value": 16.43,
+      "effects": {
+        "A": -0.08999999999999986,
+        "B": -0.15999999999999925,
+        "C": -0.2999999999999998,
+        "AB": 0.004999999999999005,
+        "AC": -0.004999999999999005,
+        "BC": 0.004999999999999893,
+        "ABC": 0.0
+      },
+      "changes_vs_baseline": {
+        "baseline": {
+          "absolute": 0.0,
+          "percent": 0.0
+        },
+        "A+": {
+          "absolute": -0.08999999999999986,
+          "percent": -0.5477784540474733
+        },
+        "B+": {
+          "absolute": -0.16999999999999815,
+          "percent": -1.0346926354229955
+        },
+        "AB+": {
+          "absolute": -0.25,
+          "percent": -1.5216068167985393
+        },
+        "C+": {
+          "absolute": -0.3000000000000007,
+          "percent": -1.8259281801582514
+        },
+        "AC+": {
+          "absolute": -0.3999999999999986,
+          "percent": -2.434570906877654
+        },
+        "BC+": {
+          "absolute": -0.4599999999999991,
+          "percent": -2.7997565429093063
+        },
+        "ABC+": {
+          "absolute": -0.5499999999999989,
+          "percent": -3.3475349969567803
+        }
+      }
+    },
+    "heating_natural_gas_GJ": {
+      "baseline_value": 68.47,
+      "effects": {
+        "A": -0.4775000000000027,
+        "B": 0.6275000000000013,
+        "C": -2.6224999999999987,
+        "AB": -0.037500000000004974,
+        "AC": 0.002500000000001279,
+        "BC": -0.01249999999999929,
+        "ABC": 0.002500000000001279
+      },
+      "changes_vs_baseline": {
+        "baseline": {
+          "absolute": 0.0,
+          "percent": 0.0
+        },
+        "A+": {
+          "absolute": -0.4399999999999977,
+          "percent": -0.6426172046151566
+        },
+        "B+": {
+          "absolute": 0.6800000000000068,
+          "percent": 0.9931356798598026
+        },
+        "AB+": {
+          "absolute": 0.1599999999999966,
+          "percent": 0.23367898349641683
+        },
+        "C+": {
+          "absolute": -2.6099999999999994,
+          "percent": -3.81188841828538
+        },
+        "AC+": {
+          "absolute": -3.049999999999997,
+          "percent": -4.454505622900537
+        },
+        "BC+": {
+          "absolute": -1.9599999999999937,
+          "percent": -2.8625675478311576
+        },
+        "ABC+": {
+          "absolute": -2.469999999999999,
+          "percent": -3.6074193077260097
+        }
+      }
+    }
+  },
+  "warnings": [
+    "This model does not include daylighting simulation",
+    "This model does not include glare metrics",
+    "This model does not include occupant comfort metrics",
+    "Cost estimates are not included",
+    "Metrics are annual totals from single-year simulation"
+  ]
+}

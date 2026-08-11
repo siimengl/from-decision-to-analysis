@@ -1,36 +1,77 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# From Decision to Analysis
 
-## Getting Started
+A lightweight AI decision layer around the performance tools professionals already trust.
 
-First, run the development server:
+## Phase 1: Staged-Mode Prototype
+
+This is Phase 1 implementation with deterministic staged content. No live Anthropic API calls, no fabricated simulation results.
+
+## What's Included
+
+Complete single-page reviewer journey:
+
+1. **Before AI** — Capture baseline plan before AI output
+2. **Read the Work** — Load sample project (Chicago office, EnergyPlus model, client brief)
+3. **Decision Map** — Current decision, goals, drivers, interactions, assumptions, missing evidence (all tagged: FROM SOURCE / AI INFERENCE / NEEDS EVIDENCE)
+4. **Early Decision Brief** — Prioritized hypotheses with transparent reasoning (FOCUS NOW / WATCH / DEFER)
+5. **Smallest Useful Test Set** — 8-case 2×2×2 factorial design with rationale
+6. **Professional Challenge** — Accept/Revise/Reject with reason capture
+7. **Real Evidence** — Placeholder (no fabricated numbers)
+8. **Evidence-Backed Recommendation** — Placeholder (awaiting real simulation)
+9. **Decision Delta** — Compare WITHOUT AI vs WITH AI + EVIDENCE
+10. **Practice Signals** — Behavioral feedback in localStorage (clear anytime)
+11. **Draft Practice Card** — Reviewable pattern card
+12. **Production Path** — Footer explaining real deployment requirements
+
+## Local Development
 
 ```bash
+# Install dependencies
+npm install
+
+# Run development server
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Build
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run build
+npm start
+```
 
-## Learn More
+## Sample Data
 
-To learn more about Next.js, take a look at the following resources:
+- `data/5ZoneAirCooled.idf` — Public EnergyPlus 26.1 example
+- `data/USA_IL_Chicago-OHare_TMY3.epw` — Public Chicago TMY3 weather
+- `data/client-brief.md` — Fictional/sanitized project brief
+- `data/evidence.json` — (Not included yet; awaiting real EnergyPlus runs)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Phase 1 Scope
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- ✅ Complete staged-mode UX with deterministic content
+- ✅ All 11 sections of reviewer journey
+- ✅ localStorage-based practice signals
+- ✅ Professional aesthetic (no AI gradients/sparkles)
+- ✅ Source/inference/evidence tagging throughout
+- ✅ Working interactions (load project, challenge AI, adjust priorities)
+- ❌ No Anthropic API integration (Phase 2+)
+- ❌ No fabricated simulation results
+- ❌ No live AI model calls
 
-## Deploy on Vercel
+## Tech Stack
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Next.js 16 + App Router
+- React 19
+- TypeScript
+- Tailwind CSS 4
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Design Principles
+
+- Professional AEC/consulting aesthetic
+- Restrained neutral palette, strong typography, generous whitespace
+- Polished and built-environment appropriate
+- Intelligent, warm, concise — not overconfident
+- Decision-support tool, not autonomous simulator
