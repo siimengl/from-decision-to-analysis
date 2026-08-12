@@ -474,7 +474,6 @@ export default function Home() {
                 <button
                   onClick={() => {
                     setBeforeAIPlan('I would start by testing window area reduction to 75% baseline and extending the south overhang to 2m, as these seem most impactful for cooling.');
-                    loadSampleProject();
                   }}
                   className="px-6 py-3 bg-neutral-200 text-neutral-700 rounded-md hover:bg-neutral-300 transition-colors"
                 >
