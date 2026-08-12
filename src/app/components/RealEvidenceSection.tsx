@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import evidenceData from '../../../data/evidence.json';
+import { PREPARED_PILOT } from '../lib/preparedPilot';
 
 export default function RealEvidenceSection() {
   const [expandedMetric, setExpandedMetric] = useState<string | null>('total_site_energy_GJ');
@@ -16,14 +17,14 @@ export default function RealEvidenceSection() {
       <div className="p-6 bg-amber-50 border-2 border-amber-500 rounded-lg space-y-4">
         <h3 className="font-semibold text-lg text-amber-900">Evidence Reversal</h3>
         <p className="text-xs text-neutral-600 italic">
-          The evidence below evaluates the prepared pilot framing used to design this 8-case study.
+          {PREPARED_PILOT.evidence_reversal.note}
         </p>
 
         <div className="space-y-3 text-sm">
           <div className="p-3 bg-white rounded border border-amber-300">
             <div className="font-medium text-neutral-800 mb-1">PILOT FRAMING:</div>
             <p className="text-neutral-700">
-              Window area × overhang interaction deserved first attention.
+              {PREPARED_PILOT.evidence_reversal.pilot_framing}
             </p>
           </div>
 
@@ -32,13 +33,13 @@ export default function RealEvidenceSection() {
             <ul className="space-y-1 text-neutral-700 ml-4 list-disc">
               <li>
                 <strong>Interactions are negligible</strong> in tested ranges:
-                AB (window × overhang) = {evidence.factorial_analysis.total_site_energy_GJ.effects.AB.toFixed(3)} GJ,
-                AC (window × insulation) = {evidence.factorial_analysis.total_site_energy_GJ.effects.AC.toFixed(3)} GJ,
-                BC (overhang × insulation) = {evidence.factorial_analysis.total_site_energy_GJ.effects.BC.toFixed(3)} GJ
+                AB (Window Area × Overhang Depth) = {evidence.factorial_analysis.total_site_energy_GJ.effects.AB.toFixed(3)} GJ,
+                AC (Window Area × Wall Insulation) = {evidence.factorial_analysis.total_site_energy_GJ.effects.AC.toFixed(3)} GJ,
+                BC (Overhang Depth × Wall Insulation) = {evidence.factorial_analysis.total_site_energy_GJ.effects.BC.toFixed(3)} GJ
                 (all &lt;0.04 GJ)
               </li>
               <li>
-                <strong>Factor C (wall insulation thickness)</strong> is the strongest measured energy lever
+                <strong>Factor C (Wall Insulation)</strong> is the strongest measured energy lever
               </li>
               <li>
                 Total site energy effect: {evidence.factorial_analysis.total_site_energy_GJ.effects.C.toFixed(2)} GJ
@@ -54,19 +55,19 @@ export default function RealEvidenceSection() {
           <div className="grid md:grid-cols-2 gap-3">
             <div className="p-3 bg-green-50 rounded border border-green-300">
               <div className="font-medium text-green-900 mb-1 text-xs">SUPPORTED</div>
-              <p className="text-xs text-neutral-700">Three factors are independently adjustable and testable</p>
+              <p className="text-xs text-neutral-700">{PREPARED_PILOT.evidence_reversal.grid.supported}</p>
             </div>
             <div className="p-3 bg-rose-50 rounded border border-rose-300">
               <div className="font-medium text-rose-900 mb-1 text-xs">CHALLENGED</div>
-              <p className="text-xs text-neutral-700">Expected glazing × shading interaction was weak; insulation dominates</p>
+              <p className="text-xs text-neutral-700">{PREPARED_PILOT.evidence_reversal.grid.challenged}</p>
             </div>
             <div className="p-3 bg-blue-50 rounded border border-blue-300">
               <div className="font-medium text-blue-900 mb-1 text-xs">NEW PRIORITY</div>
-              <p className="text-xs text-neutral-700">Envelope insulation deserves higher investigation priority than initial framing suggested</p>
+              <p className="text-xs text-neutral-700">{PREPARED_PILOT.evidence_reversal.grid.new_priority}</p>
             </div>
             <div className="p-3 bg-neutral-50 rounded border border-neutral-300">
               <div className="font-medium text-neutral-700 mb-1 text-xs">STILL UNKNOWN</div>
-              <p className="text-xs text-neutral-600">Daylight, glare, views, cost, embodied carbon, constructability</p>
+              <p className="text-xs text-neutral-600">{PREPARED_PILOT.evidence_reversal.grid.still_unknown}</p>
             </div>
           </div>
         </div>
@@ -182,9 +183,9 @@ export default function RealEvidenceSection() {
                         const effect = analysis.effects[factor];
                         const pctChange = (effect / analysis.baseline_value * 100);
                         const factorName =
-                          factor === 'A' ? 'Window area (−25%)' :
-                          factor === 'B' ? 'Overhang depth (+54%)' :
-                          'Wall insulation (+55%)';
+                          factor === 'A' ? 'Window Area (−25%)' :
+                          factor === 'B' ? 'Overhang Depth (+54%)' :
+                          'Wall Insulation (+55%)';
 
                         return (
                           <div key={factor} className="flex items-center justify-between p-2 bg-neutral-50 rounded text-sm">

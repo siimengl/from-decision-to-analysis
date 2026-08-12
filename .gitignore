@@ -60,3 +60,8 @@ early_brief.png
 final_result.png
 fix_verification.png
 initial.png
+
+test-results/
+playwright-report/
+
+final-audit.txt

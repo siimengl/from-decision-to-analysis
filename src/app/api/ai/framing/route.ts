@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { validateLiveFramingResponse } from '../../../lib/validation';
+import { stagedFraming } from '../../../lib/stagedContent';
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_AUTH_TOKEN,
@@ -8,33 +10,68 @@ const anthropic = new Anthropic({
 
 const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 
-// Approved adjustable variables from evidence.json
-const APPROVED_VARIABLES = ['A', 'B', 'C', 'WF-1 Window Area', 'Main South Overhang Depth', 'IN02 Insulation Thickness', 'south window area', 'window area', 'overhang depth', 'insulation thickness', 'exterior wall insulation'];
-
+// FRAMING_SCHEMA: defines what Live AI must return.
+// - requirements removed: project constraints/targets/preferences are reasoning context,
+//   not a returned field. Relevant source-backed goals belong in decision_framing.relevant_goals.
+// - simulation test set design is owned by PREPARED_PILOT; Live AI must not rationalize or output it.
 const FRAMING_SCHEMA = {
   type: 'object',
-  required: ['requirements', 'decision_framing', 'candidate_drivers', 'hidden_assumptions', 'missing_evidence', 'prioritized_hypotheses', 'test_set_rationale'],
+  required: ['decision_framing', 'candidate_drivers', 'hidden_assumptions', 'missing_evidence', 'prioritized_hypotheses'],
   properties: {
-    requirements: {
-      type: 'object',
-      required: ['hard_constraints', 'targets', 'preferences', 'open_questions'],
-      properties: {
-        hard_constraints: { type: 'array', items: { type: 'object', required: ['claim', 'source_type'], properties: { claim: { type: 'string' }, source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] }, source: { type: 'string' } } } },
-        targets: { type: 'array', items: { type: 'object', required: ['claim', 'source_type'], properties: { claim: { type: 'string' }, source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] }, source: { type: 'string' } } } },
-        preferences: { type: 'array', items: { type: 'object', required: ['claim', 'source_type'], properties: { claim: { type: 'string' }, source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] }, source: { type: 'string' } } } },
-        open_questions: { type: 'array', items: { type: 'string' } }
-      }
-    },
     decision_framing: {
       type: 'object',
       required: ['current_decision', 'relevant_goals'],
       properties: {
-        current_decision: { type: 'object', required: ['claim', 'source_type'], properties: { claim: { type: 'string' }, source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] }, source: { type: 'string' } } },
-        relevant_goals: { type: 'array', items: { type: 'object', required: ['claim', 'source_type'], properties: { claim: { type: 'string' }, source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] }, source: { type: 'string' } } } }
+        current_decision: {
+          type: 'object',
+          required: ['claim', 'source_type'],
+          properties: {
+            claim: { type: 'string' },
+            source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] },
+            source: { type: 'string' },
+            canonical_decision_id: { type: 'string' }
+          }
+        },
+        relevant_goals: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['claim', 'source_type'],
+            properties: {
+              claim: { type: 'string' },
+              source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] },
+              source: { type: 'string' },
+              canonical_source_goal_id: { type: 'string' }
+            }
+          }
+        }
       }
     },
-    candidate_drivers: { type: 'array', items: { type: 'object', required: ['claim', 'source_type'], properties: { claim: { type: 'string' }, source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] }, source: { type: 'string' } } } },
-    hidden_assumptions: { type: 'array', items: { type: 'object', required: ['claim', 'source_type'], properties: { claim: { type: 'string' }, source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] }, source: { type: 'string' } } } },
+    candidate_drivers: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['claim', 'source_type'],
+        properties: {
+          claim: { type: 'string' },
+          source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] },
+          source: { type: 'string' },
+          canonical_source_fact_id: { type: 'string' }
+        }
+      }
+    },
+    hidden_assumptions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['claim', 'source_type'],
+        properties: {
+          claim: { type: 'string' },
+          source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] },
+          source: { type: 'string' }
+        }
+      }
+    },
     missing_evidence: { type: 'array', items: { type: 'string' } },
     prioritized_hypotheses: {
       type: 'array',
@@ -56,8 +93,7 @@ const FRAMING_SCHEMA = {
           priority_factors: { type: 'object' }
         }
       }
-    },
-    test_set_rationale: { type: 'string' }
+    }
   }
 };
 
@@ -88,8 +124,23 @@ This is NOT a window-to-wall ratio (WWR) or glazing percentage of the façade.
 PRE-EVIDENCE RULES:
 - Tag each claim: SOURCE (from files), INFERENCE (AI reasoning), ASSUMPTION (working hypothesis), DOMAIN_KNOWLEDGE (building science principle), NEEDS_EVIDENCE (requires measurement), or NEEDS_REVIEW (source unknown/missing)
 - NEVER invent performance numbers, energy savings percentages, cost estimates, payback periods, or risk characterizations (like "low-cost" or "low-risk") before evidence
+- NEVER quantify predicted outcomes: do not write "X% reduction", "Y GJ savings", "$Z cost", "N-year payback" or any measured performance numbers in candidate_drivers or hypothesis fields
 - You may state SOURCE facts (e.g., "baseline window area is 16.56 m²") but not invented predictions
 - Describe potential directions conceptually; do not quantify outcomes
+
+CANONICAL IDs FOR SOURCE ENTRIES:
+If you use source_type SOURCE for the following, you MUST include the matching canonical ID:
+- current_decision about selecting envelope combinations: canonical_decision_id = "envelope-parametric-selection"
+- project goal about cooling/façade openness: canonical_source_goal_id = "cooling-retention"
+- project goal about annual energy without HVAC redesign: canonical_source_goal_id = "annual-energy"
+- candidate driver about WF-1 south window geometry: canonical_source_fact_id = "WF-1-geometry"
+- candidate driver about existing 1.3m overhang: canonical_source_fact_id = "overhang-depth-1.3m"
+- candidate driver about IN02 wall insulation 90mm: canonical_source_fact_id = "IN02-thickness-0.090m"
+If you have no valid canonical ID, use DOMAIN_KNOWLEDGE, INFERENCE, ASSUMPTION, NEEDS_EVIDENCE, or NEEDS_REVIEW instead of SOURCE.
+
+CONSIDER (reasoning context only — do not surface as separate output fields):
+Project constraints, targets, preferences, and open questions should inform your framing reasoning.
+Source-backed goals belong in decision_framing.relevant_goals (with canonical_source_goal_id if applicable).
 
 FOCUS_NOW BOUNDARY:
 - FOCUS_NOW hypotheses may ONLY use these adjustable variables: A (south window area), B (south overhang depth), C (exterior wall insulation thickness)
@@ -102,34 +153,33 @@ FOCUS_NOW BOUNDARY:
 
 Return valid JSON (no markdown):
 {
-  "requirements": {
-    "hard_constraints": [{"claim": "string", "source_type": "SOURCE|INFERENCE|ASSUMPTION|DOMAIN_KNOWLEDGE|NEEDS_EVIDENCE|NEEDS_REVIEW", "source": "optional"}],
-    "targets": [{"claim": "string", "source_type": "SOURCE|INFERENCE|ASSUMPTION|DOMAIN_KNOWLEDGE|NEEDS_EVIDENCE|NEEDS_REVIEW", "source": "optional"}],
-    "preferences": [{"claim": "string", "source_type": "SOURCE|INFERENCE|ASSUMPTION|DOMAIN_KNOWLEDGE|NEEDS_EVIDENCE|NEEDS_REVIEW", "source": "optional"}],
-    "open_questions": ["string"]
-  },
   "decision_framing": {
-    "current_decision": {"claim": "string", "source_type": "SOURCE|INFERENCE|ASSUMPTION|DOMAIN_KNOWLEDGE|NEEDS_EVIDENCE|NEEDS_REVIEW", "source": "optional"},
-    "relevant_goals": [{"claim": "string", "source_type": "SOURCE|INFERENCE|ASSUMPTION|DOMAIN_KNOWLEDGE|NEEDS_EVIDENCE|NEEDS_REVIEW", "source": "optional"}]
+    "current_decision": {"claim": "string", "source_type": "SOURCE", "source": "client-brief.md", "canonical_decision_id": "envelope-parametric-selection"},
+    "relevant_goals": [
+      {"claim": "string", "source_type": "SOURCE", "source": "client-brief.md: requirements", "canonical_source_goal_id": "cooling-retention"},
+      {"claim": "string", "source_type": "SOURCE", "source": "client-brief.md: requirements", "canonical_source_goal_id": "annual-energy"}
+    ]
   },
-  "candidate_drivers": [{"claim": "string", "source_type": "SOURCE|INFERENCE|ASSUMPTION|DOMAIN_KNOWLEDGE|NEEDS_EVIDENCE|NEEDS_REVIEW", "source": "optional"}],
+  "candidate_drivers": [
+    {"claim": "string", "source_type": "SOURCE", "source": "optional", "canonical_source_fact_id": "WF-1-geometry"},
+    {"claim": "string", "source_type": "INFERENCE"}
+  ],
   "hidden_assumptions": [{"claim": "string", "source_type": "ASSUMPTION|INFERENCE|NEEDS_REVIEW"}],
   "missing_evidence": ["string"],
   "prioritized_hypotheses": [{
     "name": "string",
     "variable_ids": ["A"|"B"|"C"],
     "what_it_is": "string",
-    "why_now": "string",
+    "why_now": "string (conceptual only, no invented outcome numbers)",
     "affects_requirements": "string",
     "why_test_together": "string",
-    "potential_upside": "string (conceptual only, no invented numbers)",
+    "potential_upside": "string (conceptual direction only, no invented numbers)",
     "potential_downside": "string (conceptual only, no invented numbers)",
     "unknown": "string",
     "what_would_change_priority": "string",
     "priority_bucket": "FOCUS_NOW|WATCH_DEFER|NO_NEW_ANALYSIS",
     "priority_factors": {}
-  }],
-  "test_set_rationale": "string"
+  }]
 }`;
 
     console.log('[Framing API] Calling Anthropic API...');
@@ -168,64 +218,107 @@ Return valid JSON (no markdown):
     console.log('[Framing API] Parsing JSON...');
     const result = JSON.parse(jsonText);
 
-    // Validate FOCUS_NOW hypotheses contain variable_ids with only A/B/C
-    const focusNowHypotheses = result.prioritized_hypotheses?.filter((h: any) => h.priority_bucket === 'FOCUS_NOW') || [];
+    // Validate response with fail-closed validation
+    console.log('[Framing API] Validating response...');
+    const validation = validateLiveFramingResponse(result);
 
-    // Check max 3 FOCUS_NOW
-    if (focusNowHypotheses.length > 3) {
-      console.warn('[Framing API] Too many FOCUS_NOW hypotheses:', focusNowHypotheses.length);
-      throw new Error(`Too many FOCUS_NOW hypotheses: ${focusNowHypotheses.length} (max 3). Move some to WATCH_DEFER.`);
+    if (!validation.valid) {
+      console.warn('[Framing API] Validation failed:', validation.errors);
+
+      // Attempt retry once with validation feedback
+      console.log('[Framing API] Retrying with validation feedback...');
+      const retryStartTime = Date.now();
+
+      const errorFeedback = validation.errors.map(e => `- ${e.field}: ${e.message}`).join('\n');
+      const retryPrompt = `${prompt}
+
+VALIDATION ERRORS FROM PREVIOUS ATTEMPT:
+${errorFeedback}
+
+Please fix these errors and return valid JSON.`;
+
+      try {
+        const retryMessage = await anthropic.messages.create({
+          model,
+          max_tokens: 8192,
+          messages: [{
+            role: 'user',
+            content: retryPrompt
+          }]
+        });
+
+        const retryTextContent = retryMessage.content.find((c: any) => c.type === 'text') as any;
+        if (!retryTextContent?.text) {
+          throw new Error('No text content in retry response');
+        }
+
+        let retryJsonText = retryTextContent.text.trim();
+        if (retryJsonText.startsWith('```')) {
+          retryJsonText = retryJsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+        }
+
+        const retryResult = JSON.parse(retryJsonText);
+        const retryValidation = validateLiveFramingResponse(retryResult);
+
+        if (retryValidation.valid) {
+          const retryDuration = ((Date.now() - retryStartTime) / 1000).toFixed(2);
+          const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
+          console.log('[Framing API] Retry successful after', retryDuration + 's');
+          console.log('[Framing API] Total duration:', totalDuration + 's');
+
+          // Return server-sanitized version (canonical text substituted, not model-written)
+          return NextResponse.json({
+            success: true,
+            data: retryValidation.sanitized,
+            mode: 'live',
+            duration_seconds: totalDuration,
+            retried: true
+          });
+        } else {
+          console.warn('[Framing API] Retry validation also failed:', retryValidation.errors);
+          throw new Error('Validation failed after retry');
+        }
+      } catch (retryError: any) {
+        console.error('[Framing API] Retry failed:', retryError.message);
+        // Fall through to fallback
+      }
+
+      // Return fallback with graceful message
+      const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log('[Framing API] Returning fallback after validation failure. Total duration:', totalDuration + 's');
+
+      return NextResponse.json({
+        success: false,
+        data: stagedFraming,
+        mode: 'staged',
+        duration_seconds: totalDuration,
+        fallback_reason: validation.errors.slice(0, 2).map(e => e.message).join('; ')
+      });
     }
 
-    for (const hyp of focusNowHypotheses) {
-      // Check variable_ids field exists and is valid
-      if (!hyp.variable_ids || !Array.isArray(hyp.variable_ids)) {
-        console.warn('[Framing API] FOCUS_NOW hypothesis missing variable_ids:', hyp.name);
-        throw new Error('FOCUS_NOW hypothesis missing structured variable_ids array');
-      }
-      if (hyp.variable_ids.length === 0 || hyp.variable_ids.length > 3) {
-        console.warn('[Framing API] FOCUS_NOW hypothesis has invalid variable_ids count:', hyp.name, hyp.variable_ids);
-        throw new Error('FOCUS_NOW hypothesis must have 1-3 variable_ids');
-      }
-      for (const vid of hyp.variable_ids) {
-        if (!['A', 'B', 'C'].includes(vid)) {
-          console.warn('[Framing API] FOCUS_NOW hypothesis has invalid variable_id:', hyp.name, vid);
-          throw new Error(`FOCUS_NOW hypothesis contains invalid variable_id: ${vid}. Only A/B/C allowed.`);
-        }
-      }
-
-      // Check name is natural English, not raw underscore identifier
-      if (hyp.name.includes('_')) {
-        console.warn('[Framing API] FOCUS_NOW hypothesis name has underscores:', hyp.name);
-        throw new Error('FOCUS_NOW hypothesis name must be natural professional English, not raw identifiers with underscores');
-      }
-
-      // Check text content doesn't introduce unsupported variables
-      const text = `${hyp.name} ${hyp.what_it_is} ${hyp.why_now}`.toLowerCase();
-      const hasSHGC = text.includes('shgc') || text.includes('solar heat gain coefficient');
-      const hasGlazingU = text.includes('glazing u-value') || text.includes('window u-value') || text.includes('u-factor');
-      const hasVentilation = text.includes('ventilation rate') || text.includes('air change');
-      const hasHVAC = text.includes('hvac') && !text.includes('no hvac') && !text.includes('without hvac');
-
-      if (hasSHGC || hasGlazingU || hasVentilation || hasHVAC) {
-        console.warn('[Framing API] FOCUS_NOW hypothesis text introduces unsupported variable:', hyp.name);
-        throw new Error('FOCUS_NOW hypothesis discusses unadjustable variables. Only A/B/C concepts allowed in FOCUS_NOW.');
-      }
+    if (validation.warnings.length > 0) {
+      console.warn('[Framing API] Validation warnings:', validation.warnings);
     }
 
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log('[Framing API] Success! Total duration:', totalDuration + 's');
+    console.log('[Framing API] Validation passed! Total duration:', totalDuration + 's');
 
-    return NextResponse.json({ success: true, data: result, mode: 'live', duration_seconds: totalDuration });
+    // Return server-sanitized version (canonical text substituted, never trust model-written SOURCE text)
+    return NextResponse.json({ success: true, data: validation.sanitized, mode: 'live', duration_seconds: totalDuration });
   } catch (error: any) {
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.error('[Framing API] Error after', totalDuration + 's:', error.message);
     if (error.stack) {
       console.error('[Framing API] Stack:', error.stack);
     }
-    return NextResponse.json(
-      { success: false, error: error.message, mode: 'staged', duration_seconds: totalDuration },
-      { status: 500 }
-    );
+
+    // Return staged fallback instead of 500 error
+    return NextResponse.json({
+      success: false,
+      data: stagedFraming,
+      mode: 'staged',
+      duration_seconds: totalDuration,
+      error: error.message
+    });
   }
 }

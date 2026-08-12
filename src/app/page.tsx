@@ -3,9 +3,22 @@
 import { useState, useEffect } from 'react';
 import RealEvidenceSection from './components/RealEvidenceSection';
 import evidenceData from '../../data/evidence.json';
+import {
+  normalizeProvenance,
+  PROVENANCE_LABELS,
+  ProvenanceType,
+  ProfessionalAction,
+  PROFESSIONAL_ACTION_LABELS,
+  PRACTICE_SIGNAL_LABELS,
+  PracticeSignalAction,
+  LIVE_FRAMING_CACHE_KEY
+} from './lib/types';
+import { isValidLiveFramingStructure } from './lib/validation';
+import { PREPARED_PILOT } from './lib/preparedPilot';
+import { stagedFraming } from './lib/stagedContent';
 
-function Tag({ type, source }: { type: 'source' | 'inference' | 'assumption' | 'domain-knowledge' | 'needs-evidence' | 'needs-review'; source?: string }) {
-  const styles = {
+function Tag({ type, source }: { type: ProvenanceType; source?: string }) {
+  const styles: Record<ProvenanceType, string> = {
     source: 'bg-blue-50 text-blue-700 border-blue-200',
     inference: 'bg-amber-50 text-amber-700 border-amber-200',
     assumption: 'bg-purple-50 text-purple-700 border-purple-200',
@@ -14,19 +27,10 @@ function Tag({ type, source }: { type: 'source' | 'inference' | 'assumption' | '
     'needs-review': 'bg-neutral-100 text-neutral-600 border-neutral-300'
   };
 
-  const labels = {
-    source: 'FROM SOURCE',
-    inference: 'AI INFERENCE',
-    assumption: 'ASSUMPTION',
-    'domain-knowledge': 'DOMAIN KNOWLEDGE',
-    'needs-evidence': 'NEEDS EVIDENCE',
-    'needs-review': 'NEEDS REVIEW'
-  };
-
   return (
     <div className="flex items-center gap-2 flex-wrap">
       <span className={`inline-block px-2 py-0.5 text-xs font-medium border rounded ${styles[type]}`}>
-        {labels[type]}
+        {PROVENANCE_LABELS[type]}
       </span>
       {source && <span className="text-xs text-neutral-500">{source}</span>}
     </div>
@@ -53,7 +57,7 @@ export default function Home() {
   const [whatCanChange, setWhatCanChange] = useState<string[]>([]);
   const [whatIsLocked, setWhatIsLocked] = useState<string[]>([]);
   const [priorities, setPriorities] = useState<{item: string; level: string}[]>([]);
-  const [professionalAction, setProfessionalAction] = useState<'accept' | 'revise' | 'reject' | null>(null);
+  const [professionalAction, setProfessionalAction] = useState<ProfessionalAction | null>(null);
   const [correctionReason, setCorrectionReason] = useState('');
   const [practiceSignals, setPracticeSignals] = useState<any[]>([]);
   const [aiMode, setAiMode] = useState<'live' | 'prepared' | 'analyzing'>('prepared');
@@ -67,6 +71,8 @@ export default function Home() {
     earlyBrief: true,
     testSet: true
   });
+  const [expandedEarlyBriefCards, setExpandedEarlyBriefCards] = useState<{[key: number]: boolean}>({});
+  const [practiceCardApprovalState, setPracticeCardApprovalState] = useState<'approved' | 'kept' | null>(null);
 
   useEffect(() => {
     const saved = localStorage.getItem('practice-signals');
@@ -76,10 +82,21 @@ export default function Home() {
   }, []);
 
   const savePracticeSignal = (signal: any) => {
-    const isDuplicate = practiceSignals.some(
-      s => s.action === signal.action && JSON.stringify(s.detail) === JSON.stringify(signal.detail)
-    );
-    if (isDuplicate) return;
+    // Dedupe: professional_challenge by decision + normalized reason
+    if (signal.action === 'professional_challenge') {
+      const isDupe = practiceSignals.some(s =>
+        s.action === 'professional_challenge' &&
+        s.decision === signal.decision &&
+        (s.reason || '').trim().toLowerCase() === (signal.reason || '').trim().toLowerCase()
+      );
+      if (isDupe) return;
+    } else {
+      // Other signals: dedupe by action + detail
+      const isDuplicate = practiceSignals.some(
+        s => s.action === signal.action && JSON.stringify(s.detail) === JSON.stringify(signal.detail)
+      );
+      if (isDuplicate) return;
+    }
 
     const updated = [...practiceSignals, { ...signal, timestamp: new Date().toISOString() }];
     setPracticeSignals(updated);
@@ -89,6 +106,7 @@ export default function Home() {
   const clearPracticeSignals = () => {
     setPracticeSignals([]);
     localStorage.removeItem('practice-signals');
+    // Do NOT clear professionalAction or correctionReason - those are current session state
   };
 
   const loadSampleProject = async () => {
@@ -135,13 +153,27 @@ export default function Home() {
     savePracticeSignal({ action: 'loaded_project', detail: 'sample_chicago_office' });
     setExpandedSections({ ...expandedSections, readWork: false, decisionMap: true });
 
-    // Check for cached live AI framing
-    const cachedFraming = sessionStorage.getItem('live-ai-framing');
+    // Check for cached live AI framing (versioned key only)
+    // Discard any legacy unversioned 'live-ai-framing' cache silently
+    sessionStorage.removeItem('live-ai-framing');
+    const cachedFraming = sessionStorage.getItem(LIVE_FRAMING_CACHE_KEY);
     if (cachedFraming) {
-      const parsed = JSON.parse(cachedFraming);
-      setFramingData(parsed);
-      setAiMode('live');
-      savePracticeSignal({ action: 'live_ai_framing_cached' });
+      try {
+        const parsed = JSON.parse(cachedFraming);
+        // Every cached payload must pass structural validation before entering live mode
+        if (isValidLiveFramingStructure(parsed)) {
+          setFramingData(parsed);
+          setAiMode('live');
+          savePracticeSignal({ action: 'live_ai_framing_cached' });
+        } else {
+          // Malformed or stale cache: discard and stay in prepared mode
+          sessionStorage.removeItem(LIVE_FRAMING_CACHE_KEY);
+          console.warn('[Cache] Stale/invalid live framing cache discarded');
+        }
+      } catch {
+        sessionStorage.removeItem(LIVE_FRAMING_CACHE_KEY);
+        console.warn('[Cache] Corrupt live framing cache discarded');
+      }
     }
   };
 
@@ -167,7 +199,7 @@ export default function Home() {
         setFramingData(result.data);
         setAiMode('live');
         setLiveAiFailureMessage(false);
-        sessionStorage.setItem('live-ai-framing', JSON.stringify(result.data));
+        sessionStorage.setItem(LIVE_FRAMING_CACHE_KEY, JSON.stringify(result.data));
         savePracticeSignal({ action: 'live_ai_framing_run', duration_seconds: durationSeconds });
         console.log(`[Live AI] Framing completed in ${durationSeconds}s`);
       } else {
@@ -189,7 +221,7 @@ export default function Home() {
     setExpandedSections({ ...expandedSections, [section]: !expandedSections[section] });
   };
 
-  const handleProfessionalChallenge = (action: 'accept' | 'revise' | 'reject') => {
+  const handleProfessionalChallenge = (action: ProfessionalAction) => {
     setProfessionalAction(action);
     savePracticeSignal({
       action: 'professional_challenge',
@@ -452,22 +484,32 @@ export default function Home() {
                     <div className="space-y-3">
                       <h3 className="font-semibold">Current decision</h3>
                       <div className="p-4 bg-white border border-neutral-200 rounded-md">
-                        <Tag type={(aiMode === 'live' && framingData?.decision_framing?.current_decision?.source_type?.toLowerCase()) as any || 'source'} source={(aiMode === 'live' && framingData?.decision_framing?.current_decision?.source) || "client-brief.md"} />
-                        <p className="text-neutral-700 mt-2">
-                          {(aiMode === 'live' && framingData?.decision_framing?.current_decision?.claim) || 'Selecting which façade/envelope parametric combinations to develop before design advances'}
-                        </p>
+                        {(() => {
+                          const cd = aiMode === 'live'
+                            ? framingData?.decision_framing?.current_decision
+                            : stagedFraming.decision_framing.current_decision;
+                          return (
+                            <>
+                              <Tag
+                                type={normalizeProvenance(cd?.source_type || 'source')}
+                                source={cd?.source}
+                              />
+                              <p className="text-neutral-700 mt-2">{cd?.claim}</p>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
 
                     <div className="space-y-3">
                       <h3 className="font-semibold">Relevant project goals</h3>
                       <div className="space-y-2">
-                        {toArr(aiMode === 'live' ? framingData?.decision_framing?.relevant_goals : null, [
-                          { claim: 'Reduce cooling energy while maintaining façade openness (retain at least 70% of baseline south-window area)', source_type: 'SOURCE', source: 'client-brief.md: requirements' },
-                          { claim: 'Improve annual energy performance without major HVAC redesign', source_type: 'SOURCE', source: 'client-brief.md: requirements' }
-                        ]).map((goal: any, i: number) => (
+                        {toArr(
+                          aiMode === 'live' ? framingData?.decision_framing?.relevant_goals : null,
+                          stagedFraming.decision_framing.relevant_goals
+                        ).map((goal: any, i: number) => (
                           <div key={i} className="p-3 bg-white border border-neutral-200 rounded-md">
-                            <Tag type={goal.source_type?.toLowerCase() as any || 'source'} source={goal.source} />
+                            <Tag type={normalizeProvenance(goal.source_type)} source={goal.source} />
                             <p className="text-sm text-neutral-700 mt-1">{goal.claim}</p>
                           </div>
                         ))}
@@ -477,16 +519,12 @@ export default function Home() {
                     <div className="space-y-3">
                       <h3 className="font-semibold">Plausible performance drivers</h3>
                       <div className="space-y-2">
-                        {toArr(aiMode === 'live' ? framingData?.candidate_drivers : null, [
-                          { claim: 'South façade window WF-1: 13.8m × 1.2m = 16.56 m² on a 30.5m × 2.4m = 73.2 m² wall', source_type: 'SOURCE', source: '5ZoneAirCooled.idf: WF-1 geometry' },
-                          { claim: 'South-facing glazing in Chicago climate likely drives summer cooling loads', source_type: 'INFERENCE' },
-                          { claim: 'Existing overhang 1.3m projection', source_type: 'SOURCE', source: '5ZoneAirCooled.idf: Main South Overhang depth 1.3m' },
-                          { claim: 'Deeper overhang extension could reduce direct solar gain', source_type: 'INFERENCE' },
-                          { claim: 'Exterior wall insulation IN02 currently 90mm', source_type: 'SOURCE', source: '5ZoneAirCooled.idf: IN02 thickness 0.090m' },
-                          { claim: 'Increased insulation thickness could reduce envelope load', source_type: 'INFERENCE' }
-                        ]).map((driver: any, i: number) => (
+                        {toArr(
+                          aiMode === 'live' ? framingData?.candidate_drivers : null,
+                          stagedFraming.candidate_drivers
+                        ).map((driver: any, i: number) => (
                           <div key={i} className="p-3 bg-white border border-neutral-200 rounded-md">
-                            <Tag type={driver.source_type?.toLowerCase() as any || 'inference'} source={driver.source} />
+                            <Tag type={normalizeProvenance(driver.source_type)} source={driver.source} />
                             <p className="text-sm text-neutral-700 mt-1">{driver.claim}</p>
                           </div>
                         ))}
@@ -496,12 +534,15 @@ export default function Home() {
                     <div className="space-y-3">
                       <h3 className="font-semibold">Hidden assumptions</h3>
                       <div className="space-y-2">
-                        {toArr(aiMode === 'live' ? framingData?.hidden_assumptions : null, [
-                          { claim: 'That cooling energy is the dominant challenge — heating and shoulder-season performance matter too', source_type: 'INFERENCE' },
-                          { claim: 'That single-variable findings predict combined-variable outcomes', source_type: 'INFERENCE' }
-                        ]).map((assumption: any, i: number) => (
+                        {toArr(
+                          aiMode === 'live' ? framingData?.hidden_assumptions : null,
+                          [
+                            { claim: 'That cooling energy is the dominant challenge — heating and shoulder-season performance matter too', source_type: 'INFERENCE' },
+                            { claim: 'That single-variable findings predict combined-variable outcomes', source_type: 'INFERENCE' }
+                          ]
+                        ).map((assumption: any, i: number) => (
                           <div key={i} className="p-3 bg-white border border-neutral-200 rounded-md">
-                            <Tag type={assumption.source_type?.toLowerCase() as any || 'inference'} source={assumption.source} />
+                            <Tag type={normalizeProvenance(assumption.source_type)} source={assumption.source} />
                             <p className="text-sm text-neutral-700 mt-1">{assumption.claim}</p>
                           </div>
                         ))}
@@ -511,11 +552,14 @@ export default function Home() {
                     <div className="space-y-3">
                       <h3 className="font-semibold">Missing evidence</h3>
                       <div className="space-y-2">
-                        {toArr(aiMode === 'live' ? framingData?.missing_evidence : null, [
-                          'Actual performance impact of each measure individually and in combination',
-                          'Whether interaction effects are large enough to change the recommendation',
-                          'Daylight quality, glare, and view impacts (not modeled in this sample)'
-                        ]).map((evidence: string, i: number) => (
+                        {toArr(
+                          aiMode === 'live' ? framingData?.missing_evidence : null,
+                          [
+                            'Actual performance impact of each measure individually and in combination',
+                            'Whether interaction effects are large enough to change the recommendation',
+                            'Daylight quality, glare, and view impacts (not modeled in this sample)'
+                          ]
+                        ).map((evidence: string, i: number) => (
                           <div key={i} className="p-3 bg-white border border-neutral-200 rounded-md">
                             <Tag type="needs-evidence" />
                             <p className="text-sm text-neutral-700 mt-1">{evidence}</p>
@@ -549,12 +593,10 @@ export default function Home() {
                     </p>
                   )}
                   <div className="space-y-8">
-                {toArr(aiMode === 'live' ? framingData?.prioritized_hypotheses : null, [
-                  { name: 'Window area × Overhang depth interaction', what_it_is: 'Testing south window area (baseline vs 75% of baseline area) combined with overhang depth (1.3m baseline vs 2.0m extended)', why_now: 'These are the two most adjustable façade moves that directly affect solar heat gain. The combination may reinforce, overlap, diminish, or create trade-offs that single-factor tests cannot reveal. Best alone may not be best together.', affects_requirements: 'Cooling energy reduction (primary target), façade openness (hard constraint), visual dominance preference', why_test_together: 'If window area drops, the overhang shades less glass, potentially reducing its marginal value. If the overhang is deep, window reduction may offer less additional benefit. Single-variable tests cannot reveal this.', potential_upside: 'Significant cooling load reduction while staying within the 70% baseline-window-area retention floor', potential_downside: 'Deeper overhang may conflict with "not visually dominant" preference; window reduction may compromise openness perception even if technically compliant', unknown: 'Whether the interaction is additive, synergistic, or shows diminishing returns; whether heating penalty offsets cooling gain in shoulder seasons; daylight impact (not modeled)', what_would_change_priority: 'Evidence showing interactions are negligible, or client relaxing the 70% baseline-window-area retention floor', priority_bucket: 'FOCUS_NOW', priority_factors: { client_relevance: 'High', potential_impact: 'High', adjustability: 'High', uncertainty: 'High', interaction_potential: 'High', decision_timing: 'Immediate', information_value: 'High', analysis_effort: 'Moderate' } },
-                  { name: 'Wall insulation × Window area relationship', what_it_is: 'Testing increased exterior wall insulation IN02 (0.090m baseline vs 0.14m increased) in combination with window area variations', why_now: 'Wall and glazing form the envelope system. Their relative contribution shifts based on their ratio and performance. The combination may show synergy or reveal that one dominates regardless of the other.', affects_requirements: 'Annual energy performance, construction complexity preference', why_test_together: 'If glazing dominates heat transfer, wall insulation gains may be modest. If glazing area decreases, wall insulation becomes proportionally more influential.', potential_upside: 'Envelope performance improvement across all seasons; heating benefit in addition to cooling', potential_downside: 'Increased construction thickness and cost; may offer limited return if glazing remains dominant', unknown: 'Whether wall insulation impact justifies added construction complexity when combined with window/shading changes; whether glazing dominance makes wall changes inconsequential', what_would_change_priority: 'Evidence showing wall contribution is negligible compared to glazing, or client accepting higher construction complexity', priority_bucket: 'FOCUS_NOW', priority_factors: { client_relevance: 'Medium', potential_impact: 'Medium', adjustability: 'High', uncertainty: 'Medium', interaction_potential: 'Medium', decision_timing: 'Immediate', information_value: 'Medium', analysis_effort: 'Moderate' } },
-                  { name: 'Three-way interaction (window × overhang × insulation)', what_it_is: 'The 8-run 2³ factorial design already captures the three-way interaction term. Two-level unreplicated results remain directional. If this interaction proves material, it motivates a targeted second-round study with refined levels or replication.', priority_bucket: 'CAPTURE_CAUTIOUSLY', priority_factors: {} },
-                  { name: 'HVAC system refinement', what_it_is: 'Client explicitly deferred. Envelope-first strategy makes sense; revisit after envelope direction is selected.', priority_bucket: 'WATCH_DEFER', priority_factors: {} }
-                ]).map((hyp: any, idx: number) => {
+                {toArr(
+                  aiMode === 'live' ? framingData?.prioritized_hypotheses : null,
+                  stagedFraming.prioritized_hypotheses
+                ).map((hyp: any, idx: number) => {
                   const bucketStyles: any = {
                     FOCUS_NOW: { badge: 'bg-green-100 text-green-800', border: 'border-green-200' },
                     CAPTURE_CAUTIOUSLY: { badge: 'bg-green-100 text-green-800', border: 'border-green-200' },
@@ -563,8 +605,8 @@ export default function Home() {
                   const style = bucketStyles[hyp.priority_bucket] || bucketStyles.FOCUS_NOW;
                   const bucketLabel = hyp.priority_bucket === 'FOCUS_NOW' ? 'FOCUS NOW' : hyp.priority_bucket === 'CAPTURE_CAUTIOUSLY' ? 'CAPTURE, INTERPRET CAUTIOUSLY' : 'WATCH / DEFER';
 
-                  // Clean hypothesis name: replace underscores with spaces and title case
-                  const cleanName = hyp.name.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+                  const cleanName = hyp.name;
+                  const isExpanded = expandedEarlyBriefCards[idx] || false;
 
                   return (
                     <div key={idx} className="space-y-4">
@@ -586,41 +628,61 @@ export default function Home() {
                               <p className="text-neutral-600 mt-1">{hyp.why_now}</p>
                             </div>
                             <div>
-                              <span className="font-medium text-neutral-700">Affects these requirements:</span>
-                              <p className="text-neutral-600 mt-1">{hyp.affects_requirements}</p>
-                            </div>
-                            <div>
-                              <span className="font-medium text-neutral-700">Why test together:</span>
-                              <p className="text-neutral-600 mt-1">{hyp.why_test_together}</p>
-                            </div>
-                            <div>
-                              <span className="font-medium text-neutral-700">Potential upside:</span>
-                              <p className="text-neutral-600 mt-1">{hyp.potential_upside}</p>
-                            </div>
-                            <div>
-                              <span className="font-medium text-neutral-700">Potential downside/trade-off:</span>
-                              <p className="text-neutral-600 mt-1">{hyp.potential_downside}</p>
-                            </div>
-                            <div>
-                              <span className="font-medium text-neutral-700">What we don't know:</span>
+                              <span className="font-medium text-neutral-700">Key unknown / Evidence needed:</span>
                               <p className="text-neutral-600 mt-1">{hyp.unknown}</p>
                             </div>
-                            <div>
-                              <span className="font-medium text-neutral-700">What would change this priority:</span>
-                              <p className="text-neutral-600 mt-1">{hyp.what_would_change_priority}</p>
-                            </div>
-                            {hyp.priority_factors && Object.keys(hyp.priority_factors).length > 0 && (
-                              <div className="pt-3 border-t border-neutral-200">
-                                <div className="font-medium text-neutral-700 mb-2">Priority factors (decision-support, not performance prediction):</div>
-                                <div className="grid grid-cols-2 gap-2 text-xs">
-                                  {Object.entries(hyp.priority_factors).map(([key, value]: [string, any]) => (
-                                    <div key={key} className="flex justify-between">
-                                      <span className="text-neutral-600">{key.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}</span>
-                                      <span className="font-medium">{value}</span>
-                                    </div>
-                                  ))}
+
+                            {!isExpanded && (
+                              <button
+                                onClick={() => setExpandedEarlyBriefCards({ ...expandedEarlyBriefCards, [idx]: true })}
+                                className="text-sm text-blue-600 hover:underline"
+                              >
+                                View full reasoning
+                              </button>
+                            )}
+
+                            {isExpanded && (
+                              <>
+                                <div>
+                                  <span className="font-medium text-neutral-700">Affects these requirements:</span>
+                                  <p className="text-neutral-600 mt-1">{hyp.affects_requirements}</p>
                                 </div>
-                              </div>
+                                <div>
+                                  <span className="font-medium text-neutral-700">Why test together:</span>
+                                  <p className="text-neutral-600 mt-1">{hyp.why_test_together}</p>
+                                </div>
+                                <div>
+                                  <span className="font-medium text-neutral-700">Potential upside:</span>
+                                  <p className="text-neutral-600 mt-1">{hyp.potential_upside}</p>
+                                </div>
+                                <div>
+                                  <span className="font-medium text-neutral-700">Potential downside/trade-off:</span>
+                                  <p className="text-neutral-600 mt-1">{hyp.potential_downside}</p>
+                                </div>
+                                <div>
+                                  <span className="font-medium text-neutral-700">What would change this priority:</span>
+                                  <p className="text-neutral-600 mt-1">{hyp.what_would_change_priority}</p>
+                                </div>
+                                {hyp.priority_factors && Object.keys(hyp.priority_factors).length > 0 && (
+                                  <div className="pt-3 border-t border-neutral-200">
+                                    <div className="font-medium text-neutral-700 mb-2">Priority factors (decision-support, not performance prediction):</div>
+                                    <div className="grid grid-cols-2 gap-2 text-xs">
+                                      {Object.entries(hyp.priority_factors).map(([key, value]: [string, any]) => (
+                                        <div key={key} className="flex justify-between">
+                                          <span className="text-neutral-600">{key.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}</span>
+                                          <span className="font-medium">{value}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                <button
+                                  onClick={() => setExpandedEarlyBriefCards({ ...expandedEarlyBriefCards, [idx]: false })}
+                                  className="text-sm text-blue-600 hover:underline"
+                                >
+                                  Collapse full reasoning
+                                </button>
+                              </>
                             )}
                           </div>
                         ) : (
@@ -646,20 +708,20 @@ export default function Home() {
               {expandedSections.testSet ? (
                 <>
                   <div className="text-sm font-medium mb-4 italic text-neutral-600">
-                    Pilot AI framing
+                    Completed pilot test set
                   </div>
                   <p className="text-xs text-neutral-600 italic mb-4">
                     This pilot test set was designed using the prepared framing and remains unchanged.
                   </p>
                   <div className="space-y-4">
                 <p className="text-neutral-700">
-                  {(aiMode === 'live' && framingData?.test_set_rationale) || 'An 8-case 2×2×2 factorial study to discriminate between key hypotheses and expose main effects plus interactions:'}
+                  {PREPARED_PILOT.test_set.rationale}
                 </p>
 
                 <div className="p-4 bg-neutral-100 border border-neutral-300 rounded-lg space-y-2 text-sm font-mono">
-                  <div><strong>Factor A:</strong> South window WF-1 area — Baseline (16.56 m²) vs 75% of baseline (12.42 m², centered horizontally, same height)</div>
-                  <div><strong>Factor B:</strong> Main south overhang depth — Baseline (1.3m) vs Extended (2.0m)</div>
-                  <div><strong>Factor C:</strong> Exterior wall insulation IN02 thickness — Baseline (0.090m) vs Increased (0.14m)</div>
+                  <div><strong>Factor A:</strong> {PREPARED_PILOT.test_set.factors.A.display} — {PREPARED_PILOT.test_set.factors.A.baseline} vs {PREPARED_PILOT.test_set.factors.A.modified}</div>
+                  <div><strong>Factor B:</strong> {PREPARED_PILOT.test_set.factors.B.display} — {PREPARED_PILOT.test_set.factors.B.baseline} vs {PREPARED_PILOT.test_set.factors.B.modified}</div>
+                  <div><strong>Factor C:</strong> {PREPARED_PILOT.test_set.factors.C.display} — {PREPARED_PILOT.test_set.factors.C.baseline} vs {PREPARED_PILOT.test_set.factors.C.modified}</div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -674,70 +736,21 @@ export default function Home() {
                       </tr>
                     </thead>
                     <tbody className="bg-white">
-                      <tr>
-                        <td className="border border-neutral-300 px-3 py-2 font-medium">1</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Reference case — current design</td>
-                      </tr>
-                      <tr className="bg-neutral-50">
-                        <td className="border border-neutral-300 px-3 py-2 font-medium">2</td>
-                        <td className="border border-neutral-300 px-3 py-2">Reduced</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Window area main effect</td>
-                      </tr>
-                      <tr>
-                        <td className="border border-neutral-300 px-3 py-2 font-medium">3</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Extended</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Overhang main effect</td>
-                      </tr>
-                      <tr className="bg-neutral-50">
-                        <td className="border border-neutral-300 px-3 py-2 font-medium">4</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Increased</td>
-                        <td className="border border-neutral-300 px-3 py-2">Insulation main effect</td>
-                      </tr>
-                      <tr>
-                        <td className="border border-neutral-300 px-3 py-2 font-medium">5</td>
-                        <td className="border border-neutral-300 px-3 py-2">Reduced</td>
-                        <td className="border border-neutral-300 px-3 py-2">Extended</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Window × Overhang interaction</td>
-                      </tr>
-                      <tr className="bg-neutral-50">
-                        <td className="border border-neutral-300 px-3 py-2 font-medium">6</td>
-                        <td className="border border-neutral-300 px-3 py-2">Reduced</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Increased</td>
-                        <td className="border border-neutral-300 px-3 py-2">Window × Insulation interaction</td>
-                      </tr>
-                      <tr>
-                        <td className="border border-neutral-300 px-3 py-2 font-medium">7</td>
-                        <td className="border border-neutral-300 px-3 py-2">Baseline</td>
-                        <td className="border border-neutral-300 px-3 py-2">Extended</td>
-                        <td className="border border-neutral-300 px-3 py-2">Increased</td>
-                        <td className="border border-neutral-300 px-3 py-2">Overhang × Insulation interaction</td>
-                      </tr>
-                      <tr className="bg-neutral-50">
-                        <td className="border border-neutral-300 px-3 py-2 font-medium">8</td>
-                        <td className="border border-neutral-300 px-3 py-2">Reduced</td>
-                        <td className="border border-neutral-300 px-3 py-2">Extended</td>
-                        <td className="border border-neutral-300 px-3 py-2">Increased</td>
-                        <td className="border border-neutral-300 px-3 py-2">Combined maximum intervention</td>
-                      </tr>
+                      {PREPARED_PILOT.test_set.cases.map((c, i) => (
+                        <tr key={c.id} className={i % 2 === 0 ? '' : 'bg-neutral-50'}>
+                          <td className="border border-neutral-300 px-3 py-2 font-medium">{c.id}</td>
+                          <td className="border border-neutral-300 px-3 py-2">{c.A}</td>
+                          <td className="border border-neutral-300 px-3 py-2">{c.B}</td>
+                          <td className="border border-neutral-300 px-3 py-2">{c.C}</td>
+                          <td className="border border-neutral-300 px-3 py-2">{c.why}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
 
                 <div className="p-4 bg-blue-50 border border-blue-200 rounded-md text-sm text-neutral-700">
-                  <strong>Why this design:</strong> 8 runs = full 2³ factorial: 3 main effects + 3 two-way interactions + 1 three-way interaction.
-                  <strong>Real limits:</strong> 2 levels do not map curvature/nonlinearity; unreplicated runs lack independent pure-error estimation;
-                  this is directional early-stage learning, not global optimization.
+                  <strong>Why this design:</strong> {PREPARED_PILOT.test_set.design_note}
                 </div>
                   </div>
                 </>
@@ -750,10 +763,10 @@ export default function Home() {
             <section className="space-y-4">
               <h2 className="text-2xl font-semibold">Professional Challenge</h2>
               <p className="text-sm text-neutral-600 italic mb-2">
-                Pilot checkpoint — this evaluation applied to the prepared framing.
+                {PREPARED_PILOT.professional_challenge.context}
               </p>
               <p className="text-neutral-600">
-                Before proceeding to evidence interpretation, evaluate the AI framing and test set.
+                {PREPARED_PILOT.professional_challenge.prompt}
               </p>
 
               {!professionalAction ? (
@@ -793,7 +806,7 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="p-4 bg-white border-2 border-green-600 rounded-md">
-                  <div className="font-semibold text-green-800 mb-2">Professional correction captured.</div>
+                  <div className="font-semibold text-green-800 mb-2">Professional review captured.</div>
                   <div className="text-sm text-neutral-700">
                     <div><strong>Decision:</strong> {professionalAction.toUpperCase()}</div>
                     {correctionReason && (
@@ -808,15 +821,15 @@ export default function Home() {
             <section className="space-y-4">
               <h2 className="text-2xl font-semibold">Real Evidence</h2>
               <p className="text-sm text-neutral-600 italic mb-3">
-                Pilot evidence — these results were generated locally with EnergyPlus 26.1 from public sample inputs and bundled into the browser demo. EnergyPlus is not run on demand.
+                {PREPARED_PILOT.evidence_metadata.note}
               </p>
 
               <div className="p-4 bg-green-50 border-2 border-green-600 rounded-lg">
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-green-800 font-semibold">✓ 8/8 validated simulations complete</span>
+                  <span className="text-green-800 font-semibold">{PREPARED_PILOT.evidence_metadata.status_badge}</span>
                 </div>
                 <div className="text-sm text-green-800">
-                  EnergyPlus 2³ factorial study • Chicago TMY3 • Generated 2026-08-10T19:29:22
+                  {PREPARED_PILOT.evidence_metadata.status_detail}
                 </div>
               </div>
 
@@ -863,7 +876,7 @@ export default function Home() {
                   </div>
 
                   <div className="p-3 bg-neutral-50 border border-neutral-200 rounded">
-                    <div className="font-medium text-neutral-800 mb-1">Why glazing/shading changes ranked lower:</div>
+                    <div className="font-medium text-neutral-800 mb-1">Why Window Area and Overhang Depth ranked lower:</div>
                     <p className="text-neutral-700">
                       Window area and overhang show smaller effects, and their interaction is negligible (&lt;0.04 GJ) in the tested ranges.
                       They remain adjustable but become secondary energy questions based on this evidence.
@@ -926,7 +939,7 @@ export default function Home() {
             <section className="space-y-4">
               <h2 className="text-2xl font-semibold">Decision Delta</h2>
               <p className="text-sm text-neutral-600 italic mb-3">
-                Pilot comparison showing how evidence changed direction.
+                {PREPARED_PILOT.decision_delta.note}
               </p>
 
               <div className="grid md:grid-cols-3 gap-6">
@@ -940,14 +953,14 @@ export default function Home() {
                 <div className="p-5 bg-white border border-neutral-300 rounded-lg space-y-3">
                   <h3 className="font-semibold text-neutral-900">PILOT AI FRAMING</h3>
                   <div className="text-sm text-neutral-700">
-                    Glazing × shading interaction deserved first attention
+                    {PREPARED_PILOT.decision_delta.pilot_ai_framing}
                   </div>
                 </div>
 
                 <div className="p-5 bg-white border border-green-200 rounded-lg space-y-3">
                   <h3 className="font-semibold text-green-900">AFTER REAL EVIDENCE</h3>
                   <div className="text-sm text-neutral-700">
-                    Greater attention to envelope insulation; façade options become secondary energy questions
+                    {PREPARED_PILOT.decision_delta.after_evidence}
                   </div>
                 </div>
               </div>
@@ -955,24 +968,22 @@ export default function Home() {
               <div className="p-5 bg-blue-50 border border-blue-200 rounded-lg space-y-3">
                 <h3 className="font-semibold text-blue-900">Why It Changed</h3>
                 <p className="text-sm text-neutral-700">
-                  <strong>Evidence, not AI confidence, changed the priority.</strong> The simulation revealed that:
+                  <strong>{PREPARED_PILOT.decision_delta.why_changed.headline}</strong> The simulation revealed that:
                 </p>
                 <ul className="text-sm text-neutral-700 ml-6 list-disc space-y-1">
-                  <li>Expected glazing × shading interaction was weak (&lt;0.04 GJ in tested ranges)</li>
-                  <li>Insulation had the strongest measured energy effect (5-10× larger than window/overhang changes)</li>
-                  <li>Initial AI framing was challenged by simulation results</li>
+                  {PREPARED_PILOT.decision_delta.why_changed.details.map((d, i) => (
+                    <li key={i}>{d}</li>
+                  ))}
                 </ul>
                 <p className="text-sm text-neutral-700 mt-3">
-                  Primary question: <strong>Did AI make the search and decision process smarter?</strong> — not "Was AI right?"
+                  Primary question: <strong>{PREPARED_PILOT.decision_delta.why_changed.primary_question}</strong>
                 </p>
                 <div className="text-sm text-neutral-600 space-y-1 mt-3">
                   <div className="font-medium text-neutral-700 mb-2">Measure usefulness by whether the workflow:</div>
                   <ul className="ml-4 space-y-1 list-disc">
-                    <li>✓ Surfaced a material missed issue — insulation was underweighted in initial framing</li>
-                    <li>✓ Exposed an unsupported assumption — interaction importance was overestimated</li>
-                    <li>✓ Found a single-variable conclusion that mattered more than combinations</li>
-                    <li>Redirected effort to a more informative test — tested design remains useful</li>
-                    <li>Clarified a client-value trade-off — energy vs cost/complexity now explicit</li>
+                    {PREPARED_PILOT.decision_delta.why_changed.usefulness_criteria.map((c, i) => (
+                      <li key={i}>{c}</li>
+                    ))}
                   </ul>
                 </div>
               </div>
@@ -1001,24 +1012,17 @@ export default function Home() {
                     <h3 className="font-semibold">What this workflow learned</h3>
 
                     <div className="space-y-3 text-sm">
-                      {(professionalAction || practiceSignals.filter(s => s.action === 'changed_priority').length > 0) ? (
+                      {professionalAction ? (
                         <div>
                           <div className="font-medium text-neutral-700 mb-1">From your feedback:</div>
                           <ul className="ml-4 space-y-1 list-disc text-neutral-600">
-                            {professionalAction && (
-                              <li>Professional {professionalAction}ed the AI framing{correctionReason && `: "${correctionReason}"`}</li>
-                            )}
+                            <li>Professional {PROFESSIONAL_ACTION_LABELS[professionalAction]} the AI framing{correctionReason && `: "${correctionReason}"`}</li>
                             {practiceSignals.filter(s => s.action === 'changed_priority').length > 0 && (
                               <li>Adjusted {practiceSignals.filter(s => s.action === 'changed_priority').length} priority level(s)</li>
                             )}
                           </ul>
                         </div>
-                      ) : (
-                        <div>
-                          <div className="font-medium text-neutral-700 mb-1">From your feedback:</div>
-                          <p className="text-neutral-500 italic text-sm ml-4">No professional corrections recorded in this session.</p>
-                        </div>
-                      )}
+                      ) : null}
 
                       <div>
                         <div className="font-medium text-neutral-700 mb-1">From your actions:</div>
@@ -1032,7 +1036,7 @@ export default function Home() {
                             )}
                           </ul>
                         ) : (
-                          <p className="text-neutral-500 italic text-sm ml-4">Not enough behavioral evidence yet to infer a stable work pattern.</p>
+                          <p className="text-neutral-500 italic text-sm ml-4">Not enough behavioral evidence yet to infer a reusable practice pattern.</p>
                         )}
                       </div>
 
@@ -1049,7 +1053,7 @@ export default function Home() {
                             <li>Ask whether evidence exists before proposing new analysis</li>
                           </ul>
                         ) : (
-                          <p className="text-neutral-500 italic text-sm ml-4">Not enough behavioral evidence yet to infer a stable work pattern.</p>
+                          <p className="text-neutral-500 italic text-sm ml-4">Not enough behavioral evidence yet to infer a reusable practice pattern.</p>
                         )}
                       </div>
                     </div>
@@ -1059,17 +1063,11 @@ export default function Home() {
                     <div className="font-medium mb-2">Recorded signals ({practiceSignals.length}):</div>
                     <div className="space-y-1 max-h-32 overflow-y-auto">
                       {practiceSignals.map((sig, i) => {
-                        const labelMap: {[key: string]: string} = {
-                          loaded_project: 'Loaded sample project',
-                          captured_before_ai_plan: 'Documented baseline approach',
-                          changed_priority: 'Adjusted a priority level',
-                          professional_challenge: `Professional ${sig.decision || ''} framing`,
-                          live_ai_framing_run: 'Ran live AI framing',
-                          live_ai_framing_failed: 'Live AI framing failed',
-                          live_ai_framing_error: 'Live AI framing error',
-                          live_ai_framing_cached: 'Loaded cached live framing',
-                        };
-                        const label = labelMap[sig.action] || sig.action.replace(/_/g, ' ');
+                        const action = sig.action as PracticeSignalAction;
+                        let label = PRACTICE_SIGNAL_LABELS[action] || sig.action.replace(/_/g, ' ');
+                        if (action === 'professional_challenge' && sig.decision) {
+                          label = `Professional ${sig.decision} framing`;
+                        }
                         return <div key={i}>{label}</div>;
                       })}
                     </div>
@@ -1089,47 +1087,47 @@ export default function Home() {
               <div className="p-6 bg-white border-2 border-neutral-300 rounded-lg space-y-4">
                 <div className="space-y-3 text-sm">
                   <div>
+                    <div className="font-semibold text-neutral-800 mb-1">{PREPARED_PILOT.practice_card.heading}</div>
+                  </div>
+
+                  <div>
                     <div className="font-semibold text-neutral-800 mb-1">When this pattern is useful:</div>
                     <p className="text-neutral-600">
-                      Early-stage façade/envelope decisions with multiple adjustable variables, explicit client constraints,
-                      and uncertainty about which interactions matter
+                      {PREPARED_PILOT.practice_card.when_useful}
                     </p>
                   </div>
 
                   <div>
                     <div className="font-semibold text-neutral-800 mb-1">Minimum inputs:</div>
                     <ul className="ml-4 list-disc text-neutral-600 space-y-0.5">
-                      <li>Baseline energy model (IDF or equivalent)</li>
-                      <li>Climate context (weather file)</li>
-                      <li>Client requirements and hard constraints</li>
-                      <li>Decision at stake</li>
+                      {PREPARED_PILOT.practice_card.minimum_inputs.map((input, i) => (
+                        <li key={i}>{input}</li>
+                      ))}
                     </ul>
                   </div>
 
                   <div>
                     <div className="font-semibold text-neutral-800 mb-1">What evidence is required:</div>
                     <p className="text-neutral-600">
-                      Actual simulation results from trusted performance tools (EnergyPlus or equivalent).
-                      AI cannot invent performance numbers.
+                      {PREPARED_PILOT.practice_card.evidence_required}
                     </p>
                   </div>
 
                   <div>
                     <div className="font-semibold text-neutral-800 mb-1">Common interactions/risks observed in THIS sample only:</div>
                     <ul className="ml-4 list-disc text-neutral-600 space-y-0.5">
-                      <li>Expected glazing × shading interaction was weak in tested ranges (&lt;0.04 GJ)</li>
-                      <li>Insulation had the strongest measured energy effect (not initially prioritized)</li>
-                      <li>Initial AI framing was challenged by simulation — evidence shifted the priority</li>
-                      <li>Do not generalize this project result into a universal building-performance rule</li>
+                      {PREPARED_PILOT.practice_card.observations_this_sample.map((obs, i) => (
+                        <li key={i}>{obs}</li>
+                      ))}
                     </ul>
                   </div>
 
                   <div>
-                    <div className="font-semibold text-neutral-800 mb-1">Where AI was corrected:</div>
+                    <div className="font-semibold text-neutral-800 mb-1">Professional review of AI framing:</div>
                     <p className="text-neutral-600">
                       {professionalAction
-                        ? `Professional ${professionalAction}ed the AI framing${correctionReason ? `: ${correctionReason}` : ''}`
-                        : <em className="text-neutral-400">No corrections recorded yet</em>
+                        ? `Professional ${PROFESSIONAL_ACTION_LABELS[professionalAction]} the AI framing${correctionReason ? `: ${correctionReason}` : ''}`
+                        : <em className="text-neutral-400">No professional review recorded in this session.</em>
                       }
                     </p>
                   </div>
@@ -1137,22 +1135,35 @@ export default function Home() {
                   <div>
                     <div className="font-semibold text-neutral-800 mb-1">What must remain professional judgment:</div>
                     <ul className="ml-4 list-disc text-neutral-600 space-y-0.5">
-                      <li>Final design decision and trade-off acceptance</li>
-                      <li>Client value priorities when metrics conflict</li>
-                      <li>Aesthetic, cultural, and experiential factors not modeled</li>
-                      <li>When evidence is sufficient vs when further analysis is needed</li>
-                      <li>Construction feasibility and cost acceptance</li>
+                      {PREPARED_PILOT.practice_card.professional_judgment.map((item, i) => (
+                        <li key={i}>{item}</li>
+                      ))}
                     </ul>
                   </div>
                 </div>
 
                 <div className="flex gap-3 pt-4 border-t border-neutral-200">
-                  <button className="px-5 py-2 bg-neutral-900 text-white rounded-md hover:bg-neutral-800 transition-colors text-sm font-medium">
-                    Approve for team learning
-                  </button>
-                  <button className="px-5 py-2 bg-white border border-neutral-300 text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors text-sm font-medium">
-                    Keep project-only
-                  </button>
+                  {practiceCardApprovalState === null ? (
+                    <>
+                      <button
+                        onClick={() => setPracticeCardApprovalState('approved')}
+                        className="px-5 py-2 bg-neutral-900 text-white rounded-md hover:bg-neutral-800 transition-colors text-sm font-medium"
+                      >
+                        Approve for team learning
+                      </button>
+                      <button
+                        onClick={() => setPracticeCardApprovalState('kept')}
+                        className="px-5 py-2 bg-white border border-neutral-300 text-neutral-700 rounded-md hover:bg-neutral-50 transition-colors text-sm font-medium"
+                      >
+                        Keep project-only
+                      </button>
+                    </>
+                  ) : (
+                    <div className="text-sm text-neutral-700">
+                      {practiceCardApprovalState === 'approved' && '✓ Approved for team learning — demo only.'}
+                      {practiceCardApprovalState === 'kept' && '✓ Kept project-only — demo only.'}
+                    </div>
+                  )}
                 </div>
               </div>
             </section>
