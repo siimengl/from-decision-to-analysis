@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import RealEvidenceSection from './components/RealEvidenceSection';
 import evidenceData from '../../data/evidence.json';
 import {
@@ -11,11 +11,45 @@ import {
   PROFESSIONAL_ACTION_LABELS,
   PRACTICE_SIGNAL_LABELS,
   PracticeSignalAction,
-  LIVE_FRAMING_CACHE_KEY
+  LIVE_FRAMING_CACHE_KEY,
+  LIVE_FRAMING_CACHE_INPUTS_KEY
 } from './lib/types';
 import { isValidLiveFramingStructure } from './lib/validation';
 import { PREPARED_PILOT } from './lib/preparedPilot';
 import { stagedFraming } from './lib/stagedContent';
+
+// Reviewer never waits longer than this for a fresh Live AI result.
+const LIVE_AI_TIMEOUT_MS = 10000;
+
+async function fetchLiveFraming(): Promise<any> {
+  const response = await fetch('/api/ai/framing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      clientBrief: 'Chicago Office Performance Study - deciding which early façade/envelope adjustments are worth developing',
+      modelFacts: 'Five-zone office, south window WF-1 16.56m², overhang 1.3m, wall insulation IN02 90mm',
+      decisionContext: 'Retain at least 70% of baseline south-window area (baseline 16.56 m², minimum 11.59 m²), reduce cooling energy, avoid major HVAC redesign, understand interactions'
+    })
+  });
+  return response.json();
+}
+
+// Resolve with { timedOut: true } if `promise` hasn't settled within `ms`, otherwise
+// with the settled outcome. Never rejects — used to enforce the 10-second fail-safe
+// without ever leaving the reviewer waiting on an unbounded spinner.
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<{ timedOut: true } | { timedOut: false; result?: T; error?: any }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (!settled) { settled = true; resolve({ timedOut: true }); }
+    }, ms);
+    promise.then((result) => {
+      if (!settled) { settled = true; clearTimeout(timer); resolve({ timedOut: false, result }); }
+    }).catch((error) => {
+      if (!settled) { settled = true; clearTimeout(timer); resolve({ timedOut: false, error }); }
+    });
+  });
+}
 
 function Tag({ type, source }: { type: ProvenanceType; source?: string }) {
   const styles: Record<ProvenanceType, string> = {
@@ -74,12 +108,42 @@ export default function Home() {
   const [expandedEarlyBriefCards, setExpandedEarlyBriefCards] = useState<{[key: number]: boolean}>({});
   const [practiceCardApprovalState, setPracticeCardApprovalState] = useState<'approved' | 'kept' | null>(null);
 
+  // Background prefetch bookkeeping. Keyed to the actual project inputs + professional
+  // baseline (beforeAIPlan) so a changed input can never serve a stale fresh result.
+  const pendingLiveFramingRef = useRef<{ key: string; promise: Promise<any>; startedAt: number } | null>(null);
+
   useEffect(() => {
     const saved = localStorage.getItem('practice-signals');
     if (saved) {
       setPracticeSignals(JSON.parse(saved));
     }
   }, []);
+
+  // Changing the professional baseline (beforeAIPlan) after the project is loaded must
+  // invalidate any stale cached/prefetched fresh result and start a new background
+  // prefetch keyed to the updated inputs, so a later Run Live AI press never serves a
+  // result generated against the old baseline. Debounced so active typing doesn't fire
+  // a request per keystroke.
+  useEffect(() => {
+    if (!projectLoaded) return;
+    const cacheKey = computeFramingCacheKey();
+    const cachedInputsKey = sessionStorage.getItem(LIVE_FRAMING_CACHE_INPUTS_KEY);
+    if (cachedInputsKey !== null && cachedInputsKey !== cacheKey) {
+      sessionStorage.removeItem(LIVE_FRAMING_CACHE_KEY);
+      sessionStorage.removeItem(LIVE_FRAMING_CACHE_INPUTS_KEY);
+      if (aiMode === 'live') {
+        setAiMode('prepared');
+        setFramingData(null);
+      }
+    }
+    const debounce = setTimeout(() => {
+      if (pendingLiveFramingRef.current?.key !== cacheKey) {
+        startBackgroundLiveFraming(cacheKey);
+      }
+    }, 400);
+    return () => clearTimeout(debounce);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectLoaded, beforeAIPlan]);
 
   const savePracticeSignal = (signal: any) => {
     // Dedupe: professional_challenge by decision + normalized reason
@@ -107,6 +171,35 @@ export default function Home() {
     setPracticeSignals([]);
     localStorage.removeItem('practice-signals');
     // Do NOT clear professionalAction or correctionReason - those are current session state
+  };
+
+  // Cache/prefetch key: derived from the actual current project inputs + professional
+  // baseline (beforeAIPlan). The sample project's canonical inputs are fixed, so the
+  // baseline plan text is the one input that can legitimately vary between runs —
+  // changing it must invalidate any pending/cached fresh result.
+  const computeFramingCacheKey = () => JSON.stringify({ project: 'sample_chicago_office', baseline: beforeAIPlan.trim() });
+
+  const startBackgroundLiveFraming = (key: string) => {
+    if (pendingLiveFramingRef.current?.key === key) return; // already pending for this key
+    const promise = fetchLiveFraming();
+    pendingLiveFramingRef.current = { key, promise, startedAt: Date.now() };
+
+    // Opportunistically cache a valid result as soon as it lands, even if the
+    // reviewer hasn't pressed Run Live AI yet (or the visible call already timed
+    // out) — so a later Run Live AI press can serve it immediately from cache.
+    promise.then((result) => {
+      if (result?.success && isValidLiveFramingStructure(result.data)) {
+        sessionStorage.setItem(LIVE_FRAMING_CACHE_KEY, JSON.stringify(result.data));
+        sessionStorage.setItem(LIVE_FRAMING_CACHE_INPUTS_KEY, key);
+      }
+    }).catch(() => {
+      // Swallow: the visible Run Live AI path (or a future one) handles user-facing failure.
+    }).finally(() => {
+      // Only clear if no newer request has replaced this one.
+      if (pendingLiveFramingRef.current?.key === key && pendingLiveFramingRef.current.promise === promise) {
+        pendingLiveFramingRef.current = null;
+      }
+    });
   };
 
   const loadSampleProject = async () => {
@@ -153,11 +246,15 @@ export default function Home() {
     savePracticeSignal({ action: 'loaded_project', detail: 'sample_chicago_office' });
     setExpandedSections({ ...expandedSections, readWork: false, decisionMap: true });
 
-    // Check for cached live AI framing (versioned key only)
+    const cacheKey = computeFramingCacheKey();
+
+    // Check for cached live AI framing (versioned key only), keyed to current inputs.
     // Discard any legacy unversioned 'live-ai-framing' cache silently
     sessionStorage.removeItem('live-ai-framing');
     const cachedFraming = sessionStorage.getItem(LIVE_FRAMING_CACHE_KEY);
-    if (cachedFraming) {
+    const cachedInputsKey = sessionStorage.getItem(LIVE_FRAMING_CACHE_INPUTS_KEY);
+    let servedFromCache = false;
+    if (cachedFraming && cachedInputsKey === cacheKey) {
       try {
         const parsed = JSON.parse(cachedFraming);
         // Every cached payload must pass structural validation before entering live mode
@@ -165,15 +262,28 @@ export default function Home() {
           setFramingData(parsed);
           setAiMode('live');
           savePracticeSignal({ action: 'live_ai_framing_cached' });
+          servedFromCache = true;
         } else {
           // Malformed or stale cache: discard and stay in prepared mode
           sessionStorage.removeItem(LIVE_FRAMING_CACHE_KEY);
+          sessionStorage.removeItem(LIVE_FRAMING_CACHE_INPUTS_KEY);
           console.warn('[Cache] Stale/invalid live framing cache discarded');
         }
       } catch {
         sessionStorage.removeItem(LIVE_FRAMING_CACHE_KEY);
+        sessionStorage.removeItem(LIVE_FRAMING_CACHE_INPUTS_KEY);
         console.warn('[Cache] Corrupt live framing cache discarded');
       }
+    } else if (cachedFraming) {
+      // Cache exists but for different inputs/baseline — stale, discard.
+      sessionStorage.removeItem(LIVE_FRAMING_CACHE_KEY);
+      sessionStorage.removeItem(LIVE_FRAMING_CACHE_INPUTS_KEY);
+    }
+
+    // Prepared AI stays visible immediately regardless; kick off fresh Live AI in the
+    // background now that inputs are known, so Run Live AI can show it instantly later.
+    if (!servedFromCache) {
+      startBackgroundLiveFraming(cacheKey);
     }
   };
 
@@ -181,25 +291,76 @@ export default function Home() {
     setAiMode('analyzing');
     setLiveAiFailureMessage(false);
     const startTime = Date.now();
+    const cacheKey = computeFramingCacheKey();
 
+    // If a prefetch already finished and landed in cache for these exact inputs,
+    // show it immediately — no wait at all.
+    const cachedFraming = sessionStorage.getItem(LIVE_FRAMING_CACHE_KEY);
+    const cachedInputsKey = sessionStorage.getItem(LIVE_FRAMING_CACHE_INPUTS_KEY);
+    if (cachedFraming && cachedInputsKey === cacheKey) {
+      try {
+        const parsed = JSON.parse(cachedFraming);
+        if (isValidLiveFramingStructure(parsed)) {
+          const durationSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
+          setFramingData(parsed);
+          setAiMode('live');
+          setLiveAiFailureMessage(false);
+          savePracticeSignal({ action: 'live_ai_framing_cached', duration_seconds: durationSeconds });
+          console.log('[Live AI] Served prefetched result instantly');
+          return;
+        }
+      } catch {
+        // fall through to live/pending path
+      }
+    }
+
+    // Reuse the in-flight/prefetched request only if it was started for the SAME
+    // inputs + professional baseline; otherwise a changed baseline would silently
+    // reuse a stale result. If nothing is pending (e.g. prefetch hadn't started, or
+    // already settled and was cleared), start one now via the same helper so its
+    // result is cached identically whether prefetched or triggered by this click.
+    if (pendingLiveFramingRef.current?.key !== cacheKey) {
+      startBackgroundLiveFraming(cacheKey);
+    }
+    const pending = pendingLiveFramingRef.current!;
+
+    // Never wait longer than ~10s for the visible Run Live AI interaction itself,
+    // measured from this click — not from whenever the background prefetch happened
+    // to start. The prefetch may have been running for several seconds already (e.g.
+    // while the reviewer was reading the loaded project); none of that lead time
+    // should be deducted from the click's own budget, or a request that's genuinely
+    // about to succeed gets discarded as a false timeout.
     try {
-      const response = await fetch('/api/ai/framing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clientBrief: 'Chicago Office Performance Study - deciding which early façade/envelope adjustments are worth developing',
-          modelFacts: 'Five-zone office, south window WF-1 16.56m², overhang 1.3m, wall insulation IN02 90mm',
-          decisionContext: 'Retain at least 70% of baseline south-window area (baseline 16.56 m², minimum 11.59 m²), reduce cooling energy, avoid major HVAC redesign, understand interactions'
-        })
-      });
-      const result = await response.json();
+      const outcome = await withTimeout(pending.promise, LIVE_AI_TIMEOUT_MS);
       const durationSeconds = ((Date.now() - startTime) / 1000).toFixed(1);
 
-      if (result.success) {
+      if (outcome.timedOut) {
+        // Fresh AI still unfinished after the fail-safe window: keep prepared framing
+        // visible, never expose partial/unvalidated output, never blank the page.
+        setAiMode('prepared');
+        setLiveAiFailureMessage(true);
+        savePracticeSignal({ action: 'live_ai_framing_failed', error: 'timeout', duration_seconds: durationSeconds });
+        console.log(`[Live AI] Timed out after ${durationSeconds}s (still running in background)`);
+        return;
+      }
+
+      if (outcome.error) {
+        throw outcome.error;
+      }
+
+      const result = outcome.result;
+      // Guard against the prefetch resolving after the user has since changed inputs.
+      if (pendingLiveFramingRef.current?.key !== cacheKey) {
+        setAiMode('prepared');
+        return;
+      }
+
+      if (result.success && isValidLiveFramingStructure(result.data)) {
         setFramingData(result.data);
         setAiMode('live');
         setLiveAiFailureMessage(false);
         sessionStorage.setItem(LIVE_FRAMING_CACHE_KEY, JSON.stringify(result.data));
+        sessionStorage.setItem(LIVE_FRAMING_CACHE_INPUTS_KEY, cacheKey);
         savePracticeSignal({ action: 'live_ai_framing_run', duration_seconds: durationSeconds });
         console.log(`[Live AI] Framing completed in ${durationSeconds}s`);
       } else {
@@ -215,6 +376,9 @@ export default function Home() {
       savePracticeSignal({ action: 'live_ai_framing_error', duration_seconds: durationSeconds });
       console.log(`[Live AI] Framing error after ${durationSeconds}s:`, error);
     }
+    // Note: pendingLiveFramingRef is cleared by the prefetch's own settlement handler
+    // in startBackgroundLiveFraming, not here — a timeout here must not stop the
+    // in-flight request from still landing in cache for a later Run Live AI press.
   };
 
   const toggleSection = (section: string) => {
@@ -471,7 +635,7 @@ export default function Home() {
                       </button>
                     )}
                     {aiMode === 'analyzing' && (
-                      <span className="text-xs text-blue-600 italic">Fresh analysis may take about a minute on this demo endpoint.</span>
+                      <span className="text-xs text-blue-600 italic">Checking for fresh AI analysis (up to ~10s)...</span>
                     )}
                     {aiMode === 'live' && (
                       <span className="text-xs text-green-600 italic">Fresh AI analysis complete</span>

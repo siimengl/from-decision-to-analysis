@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
-import { validateLiveFramingResponse } from '../../../lib/validation';
+import { validateLiveFramingResponse, validateCompactFramingResponse } from '../../../lib/validation';
+import { assembleLiveFraming } from '../../../lib/assembleFraming';
 import { stagedFraming } from '../../../lib/stagedContent';
 
 const anthropic = new Anthropic({
@@ -10,301 +11,181 @@ const anthropic = new Anthropic({
 
 const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
 
-// FRAMING_SCHEMA: defines what Live AI must return.
-// - requirements removed: project constraints/targets/preferences are reasoning context,
-//   not a returned field. Relevant source-backed goals belong in decision_framing.relevant_goals.
-// - simulation test set design is owned by PREPARED_PILOT; Live AI must not rationalize or output it.
-const FRAMING_SCHEMA = {
-  type: 'object',
-  required: ['decision_framing', 'candidate_drivers', 'hidden_assumptions', 'missing_evidence', 'prioritized_hypotheses'],
-  properties: {
-    decision_framing: {
-      type: 'object',
-      required: ['current_decision', 'relevant_goals'],
-      properties: {
-        current_decision: {
-          type: 'object',
-          required: ['claim', 'source_type'],
-          properties: {
-            claim: { type: 'string' },
-            source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] },
-            source: { type: 'string' },
-            canonical_decision_id: { type: 'string' }
-          }
-        },
-        relevant_goals: {
-          type: 'array',
-          items: {
-            type: 'object',
-            required: ['claim', 'source_type'],
-            properties: {
-              claim: { type: 'string' },
-              source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] },
-              source: { type: 'string' },
-              canonical_source_goal_id: { type: 'string' }
-            }
-          }
-        }
-      }
+// COMPACT LIVE-AI SCHEMA
+// Live AI generates ONLY the genuinely dynamic framing delta:
+// - priority_order: investigation priority among the canonical A/B/C variables
+// - priority_rationale: one short rationale per variable
+// - interaction: at most one interaction worth investigating (or null)
+// - missing_evidence: one concise missing-evidence observation
+// Everything else (source text, project facts, prepared-pilot content, evidence)
+// is server-owned and assembled around this delta in assembleLiveFraming().
+const COMPACT_PROMPT = `You are an AI decision consultant for building performance professionals. A Chicago office façade/envelope decision has three canonical adjustable variables:
+
+A = Window Area (south window area: baseline 16.56 m² vs reduced 12.42 m² = 75% of baseline)
+B = Overhang Depth (main south overhang: baseline 1.3m vs extended 2.0m)
+C = Wall Insulation (exterior wall insulation IN02 thickness: baseline 0.090m vs increased 0.140m)
+
+Constraints: retain ≥70% of baseline south window area (11.59 m² minimum), reduce cooling energy, avoid major HVAC redesign, avoid deep/visually dominant projections, prefer lower construction complexity.
+
+Task: produce ONLY a compact framing delta — do not restate project facts, do not invent performance numbers, energy savings, costs, or payback periods.
+
+Return valid JSON only (no markdown), exactly this shape:
+{
+  "priority_order": ["A","B","C"],
+  "priority_rationale": {
+    "A": "one short sentence, conceptual only, no invented numbers",
+    "B": "one short sentence, conceptual only, no invented numbers",
+    "C": "one short sentence, conceptual only, no invented numbers"
+  },
+  "interaction": {"variable_ids": ["A","B"], "rationale": "one short sentence, conceptual only, no invented numbers"},
+  "missing_evidence": "one concise sentence naming what evidence is still needed"
+}
+
+Rules:
+- priority_order must be a permutation of exactly ["A","B","C"], most important first.
+- interaction may include 1-3 of A/B/C, or be null if no interaction stands out.
+- Do not use raw identifiers with underscores. Do not quantify predicted outcomes (no "%", "GJ", "kWh", "$", "payback", "low-cost", "low-risk").
+- Be concise: each rationale is one sentence.`;
+
+// Minimal thinking budget: this installed SDK/API requires thinking budget_tokens >= 1024
+// when thinking is enabled, so the fastest safe option for a compact structured JSON
+// response is to disable thinking entirely for this call.
+const THINKING_CONFIG = { type: 'disabled' as const };
+const COMPACT_MAX_TOKENS = 1024;
+
+async function callCompactFraming(prompt: string) {
+  const stream = anthropic.messages.stream(
+    {
+      model,
+      max_tokens: COMPACT_MAX_TOKENS,
+      thinking: THINKING_CONFIG,
+      messages: [{ role: 'user', content: prompt }]
     },
-    candidate_drivers: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['claim', 'source_type'],
-        properties: {
-          claim: { type: 'string' },
-          source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] },
-          source: { type: 'string' },
-          canonical_source_fact_id: { type: 'string' }
-        }
-      }
-    },
-    hidden_assumptions: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['claim', 'source_type'],
-        properties: {
-          claim: { type: 'string' },
-          source_type: { type: 'string', enum: ['SOURCE', 'INFERENCE', 'ASSUMPTION', 'DOMAIN_KNOWLEDGE', 'NEEDS_EVIDENCE', 'NEEDS_REVIEW'] },
-          source: { type: 'string' }
-        }
-      }
-    },
-    missing_evidence: { type: 'array', items: { type: 'string' } },
-    prioritized_hypotheses: {
-      type: 'array',
-      items: {
-        type: 'object',
-        required: ['name', 'variable_ids', 'what_it_is', 'why_now', 'affects_requirements', 'why_test_together', 'potential_upside', 'potential_downside', 'unknown', 'what_would_change_priority', 'priority_factors'],
-        properties: {
-          name: { type: 'string' },
-          variable_ids: { type: 'array', items: { type: 'string', enum: ['A', 'B', 'C'] }, minItems: 1, maxItems: 3 },
-          what_it_is: { type: 'string' },
-          why_now: { type: 'string' },
-          affects_requirements: { type: 'string' },
-          why_test_together: { type: 'string' },
-          potential_upside: { type: 'string' },
-          potential_downside: { type: 'string' },
-          unknown: { type: 'string' },
-          what_would_change_priority: { type: 'string' },
-          priority_bucket: { type: 'string', enum: ['FOCUS_NOW', 'WATCH_DEFER', 'NO_NEW_ANALYSIS'] },
-          priority_factors: { type: 'object' }
-        }
-      }
-    }
+    { maxRetries: 0 }
+  );
+
+  const message = await stream.finalMessage();
+  const textContent = message.content.find((c: any) => c.type === 'text') as any;
+  if (!textContent || !textContent.text) {
+    throw new Error(`No text content in response (got ${message.content.map((c: any) => c.type).join(', ')})`);
   }
-};
+
+  let jsonText = textContent.text.trim();
+  if (jsonText.startsWith('```')) {
+    jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+  }
+
+  return {
+    parsed: JSON.parse(jsonText),
+    usage: message.usage
+  };
+}
 
 export async function POST(request: Request) {
   const startTime = Date.now();
   try {
-    const { clientBrief, modelFacts, decisionContext } = await request.json();
+    // Client input kept for logging/parity; the compact prompt is self-contained
+    // (all project facts are server-owned canonical content, not client-supplied).
+    await request.json().catch(() => ({}));
 
     console.log('[Framing API] Request received');
     console.log('[Framing API] API Key exists:', !!process.env.ANTHROPIC_AUTH_TOKEN);
     console.log('[Framing API] Base URL:', process.env.ANTHROPIC_BASE_URL);
     console.log('[Framing API] Model:', model);
 
-    const prompt = `You are an AI decision consultant for building performance professionals. Frame this envelope design decision by identifying which variable relationships deserve evidence.
-
-INPUT:
-Client Brief: ${clientBrief}
-Model Facts: ${modelFacts}
-Decision Context: ${decisionContext}
-
-CRITICAL CONSTRAINT INTERPRETATION:
-The client constraint "retain ≥70% of baseline south window area" means:
-- Baseline window area: 16.56 m²
-- Minimum allowed: 11.59 m² (70% of 16.56 m²)
-- Tested reduced area: 12.42 m² (75% of baseline, meets constraint)
-This is NOT a window-to-wall ratio (WWR) or glazing percentage of the façade.
-
-PRE-EVIDENCE RULES:
-- Tag each claim: SOURCE (from files), INFERENCE (AI reasoning), ASSUMPTION (working hypothesis), DOMAIN_KNOWLEDGE (building science principle), NEEDS_EVIDENCE (requires measurement), or NEEDS_REVIEW (source unknown/missing)
-- NEVER invent performance numbers, energy savings percentages, cost estimates, payback periods, or risk characterizations (like "low-cost" or "low-risk") before evidence
-- NEVER quantify predicted outcomes: do not write "X% reduction", "Y GJ savings", "$Z cost", "N-year payback" or any measured performance numbers in candidate_drivers or hypothesis fields
-- You may state SOURCE facts (e.g., "baseline window area is 16.56 m²") but not invented predictions
-- Describe potential directions conceptually; do not quantify outcomes
-
-CANONICAL IDs FOR SOURCE ENTRIES:
-If you use source_type SOURCE for the following, you MUST include the matching canonical ID:
-- current_decision about selecting envelope combinations: canonical_decision_id = "envelope-parametric-selection"
-- project goal about cooling/façade openness: canonical_source_goal_id = "cooling-retention"
-- project goal about annual energy without HVAC redesign: canonical_source_goal_id = "annual-energy"
-- candidate driver about WF-1 south window geometry: canonical_source_fact_id = "WF-1-geometry"
-- candidate driver about existing 1.3m overhang: canonical_source_fact_id = "overhang-depth-1.3m"
-- candidate driver about IN02 wall insulation 90mm: canonical_source_fact_id = "IN02-thickness-0.090m"
-If you have no valid canonical ID, use DOMAIN_KNOWLEDGE, INFERENCE, ASSUMPTION, NEEDS_EVIDENCE, or NEEDS_REVIEW instead of SOURCE.
-
-CONSIDER (reasoning context only — do not surface as separate output fields):
-Project constraints, targets, preferences, and open questions should inform your framing reasoning.
-Source-backed goals belong in decision_framing.relevant_goals (with canonical_source_goal_id if applicable).
-
-FOCUS_NOW BOUNDARY:
-- FOCUS_NOW hypotheses may ONLY use these adjustable variables: A (south window area), B (south overhang depth), C (exterior wall insulation thickness)
-- Maximum 3 FOCUS_NOW hypotheses total
-- Each FOCUS_NOW hypothesis MUST include "variable_ids" array with 1-3 values from ["A", "B", "C"]
-- Hypothesis "name" must be natural professional English (e.g., "Window area and overhang interaction"), NOT raw identifiers with underscores
-- When describing window area reduction, say "75% of baseline area" or "12.42 m² (75% of baseline 16.56 m²)", NOT "75% retention" or "75% glazing"
-- Other concepts (SHGC, U-value, daylight, HVAC, internal gains, ventilation, cost, carbon) may appear ONLY in: candidate_drivers (as DOMAIN_KNOWLEDGE/INFERENCE), hidden_assumptions (as ASSUMPTION), or missing_evidence (as text)
-- Do NOT mention unadjustable variables in FOCUS_NOW hypotheses
-
-Return valid JSON (no markdown):
-{
-  "decision_framing": {
-    "current_decision": {"claim": "string", "source_type": "SOURCE", "source": "client-brief.md", "canonical_decision_id": "envelope-parametric-selection"},
-    "relevant_goals": [
-      {"claim": "string", "source_type": "SOURCE", "source": "client-brief.md: requirements", "canonical_source_goal_id": "cooling-retention"},
-      {"claim": "string", "source_type": "SOURCE", "source": "client-brief.md: requirements", "canonical_source_goal_id": "annual-energy"}
-    ]
-  },
-  "candidate_drivers": [
-    {"claim": "string", "source_type": "SOURCE", "source": "optional", "canonical_source_fact_id": "WF-1-geometry"},
-    {"claim": "string", "source_type": "INFERENCE"}
-  ],
-  "hidden_assumptions": [{"claim": "string", "source_type": "ASSUMPTION|INFERENCE|NEEDS_REVIEW"}],
-  "missing_evidence": ["string"],
-  "prioritized_hypotheses": [{
-    "name": "string",
-    "variable_ids": ["A"|"B"|"C"],
-    "what_it_is": "string",
-    "why_now": "string (conceptual only, no invented outcome numbers)",
-    "affects_requirements": "string",
-    "why_test_together": "string",
-    "potential_upside": "string (conceptual direction only, no invented numbers)",
-    "potential_downside": "string (conceptual only, no invented numbers)",
-    "unknown": "string",
-    "what_would_change_priority": "string",
-    "priority_bucket": "FOCUS_NOW|WATCH_DEFER|NO_NEW_ANALYSIS",
-    "priority_factors": {}
-  }]
-}`;
-
-    console.log('[Framing API] Calling Anthropic API...');
+    console.log('[Framing API] Calling Anthropic API (compact, streaming)...');
     const apiStartTime = Date.now();
-    const message = await anthropic.messages.create({
-      model,
-      max_tokens: 8192,
-      messages: [{
-        role: 'user',
-        content: prompt
-      }]
-    });
+
+    let compactResult;
+    try {
+      compactResult = await callCompactFraming(COMPACT_PROMPT);
+    } catch (err: any) {
+      const apiDuration = ((Date.now() - apiStartTime) / 1000).toFixed(2);
+      console.error('[Framing API] Compact call failed after', apiDuration + 's:', err.message);
+      throw err;
+    }
+
     const apiDuration = ((Date.now() - apiStartTime) / 1000).toFixed(2);
+    console.log('[Framing API] Compact response received. API call duration:', apiDuration + 's');
+    console.log('[Framing API] Output tokens:', compactResult.usage?.output_tokens, 'Thinking tokens:', compactResult.usage?.output_tokens_details?.thinking_tokens);
 
-    console.log('[Framing API] Response received, stop_reason:', message.stop_reason);
-    console.log('[Framing API] API call duration:', apiDuration + 's');
-    console.log('[Framing API] Content blocks:', message.content.length);
+    const compactValidation = validateCompactFramingResponse(compactResult.parsed);
 
-    const textContent = message.content.find((c: any) => c.type === 'text') as any;
-    if (!textContent || !textContent.text) {
-      console.error('[Framing API] No text content in response. Content blocks:', message.content.map((c: any) => c.type).join(', '));
-      throw new Error(`No text content in response (got ${message.content.map((c: any) => c.type).join(', ')})`);
-    }
+    if (!compactValidation.valid) {
+      console.warn('[Framing API] Compact validation failed:', compactValidation.errors);
 
-    console.log('[Framing API] Text content length:', textContent.text.length);
-    console.log('[Framing API] Text preview:', textContent.text.substring(0, 200));
-
-    let jsonText = textContent.text.trim();
-
-    // Remove markdown code blocks if present
-    if (jsonText.startsWith('```')) {
-      console.log('[Framing API] Removing markdown code blocks');
-      jsonText = jsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-    }
-
-    console.log('[Framing API] Parsing JSON...');
-    const result = JSON.parse(jsonText);
-
-    // Validate response with fail-closed validation
-    console.log('[Framing API] Validating response...');
-    const validation = validateLiveFramingResponse(result);
-
-    if (!validation.valid) {
-      console.warn('[Framing API] Validation failed:', validation.errors);
-
-      // Attempt retry once with validation feedback
-      console.log('[Framing API] Retrying with validation feedback...');
+      // Attempt one retry with validation feedback
+      console.log('[Framing API] Retrying compact call with validation feedback...');
       const retryStartTime = Date.now();
-
-      const errorFeedback = validation.errors.map(e => `- ${e.field}: ${e.message}`).join('\n');
-      const retryPrompt = `${prompt}
-
-VALIDATION ERRORS FROM PREVIOUS ATTEMPT:
-${errorFeedback}
-
-Please fix these errors and return valid JSON.`;
+      const errorFeedback = compactValidation.errors.map(e => `- ${e.field}: ${e.message}`).join('\n');
+      const retryPrompt = `${COMPACT_PROMPT}\n\nVALIDATION ERRORS FROM PREVIOUS ATTEMPT:\n${errorFeedback}\n\nPlease fix these errors and return valid JSON.`;
 
       try {
-        const retryMessage = await anthropic.messages.create({
-          model,
-          max_tokens: 8192,
-          messages: [{
-            role: 'user',
-            content: retryPrompt
-          }]
-        });
+        const retryResult = await callCompactFraming(retryPrompt);
+        const retryValidation = validateCompactFramingResponse(retryResult.parsed);
 
-        const retryTextContent = retryMessage.content.find((c: any) => c.type === 'text') as any;
-        if (!retryTextContent?.text) {
-          throw new Error('No text content in retry response');
+        if (retryValidation.valid && retryValidation.sanitized) {
+          const assembled = assembleLiveFraming(retryValidation.sanitized);
+          const finalValidation = validateLiveFramingResponse(assembled);
+
+          if (finalValidation.valid) {
+            const retryDuration = ((Date.now() - retryStartTime) / 1000).toFixed(2);
+            const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
+            console.log('[Framing API] Retry successful after', retryDuration + 's. Total duration:', totalDuration + 's');
+            return NextResponse.json({
+              success: true,
+              data: finalValidation.sanitized,
+              mode: 'live',
+              duration_seconds: totalDuration,
+              retried: true
+            });
+          }
         }
-
-        let retryJsonText = retryTextContent.text.trim();
-        if (retryJsonText.startsWith('```')) {
-          retryJsonText = retryJsonText.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-        }
-
-        const retryResult = JSON.parse(retryJsonText);
-        const retryValidation = validateLiveFramingResponse(retryResult);
-
-        if (retryValidation.valid) {
-          const retryDuration = ((Date.now() - retryStartTime) / 1000).toFixed(2);
-          const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
-          console.log('[Framing API] Retry successful after', retryDuration + 's');
-          console.log('[Framing API] Total duration:', totalDuration + 's');
-
-          // Return server-sanitized version (canonical text substituted, not model-written)
-          return NextResponse.json({
-            success: true,
-            data: retryValidation.sanitized,
-            mode: 'live',
-            duration_seconds: totalDuration,
-            retried: true
-          });
-        } else {
-          console.warn('[Framing API] Retry validation also failed:', retryValidation.errors);
-          throw new Error('Validation failed after retry');
-        }
+        console.warn('[Framing API] Retry validation also failed');
+        throw new Error('Compact validation failed after retry');
       } catch (retryError: any) {
         console.error('[Framing API] Retry failed:', retryError.message);
-        // Fall through to fallback
       }
 
-      // Return fallback with graceful message
       const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log('[Framing API] Returning fallback after validation failure. Total duration:', totalDuration + 's');
-
       return NextResponse.json({
         success: false,
         data: stagedFraming,
         mode: 'staged',
         duration_seconds: totalDuration,
-        fallback_reason: validation.errors.slice(0, 2).map(e => e.message).join('; ')
+        fallback_reason: compactValidation.errors.slice(0, 2).map(e => e.message).join('; ')
       });
     }
 
-    if (validation.warnings.length > 0) {
-      console.warn('[Framing API] Validation warnings:', validation.warnings);
+    // Server-side assembly: compact AI delta -> full UI/validator shape, using
+    // only server-owned canonical/source content (model never invents source text).
+    const assembled = assembleLiveFraming(compactValidation.sanitized!);
+
+    // Preserve existing fail-closed validation and canonical-ID restrictions on the
+    // assembled result (defense in depth — assembly is server-owned but re-validated).
+    const finalValidation = validateLiveFramingResponse(assembled);
+
+    if (!finalValidation.valid) {
+      console.warn('[Framing API] Assembled response failed structural validation:', finalValidation.errors);
+      const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
+      return NextResponse.json({
+        success: false,
+        data: stagedFraming,
+        mode: 'staged',
+        duration_seconds: totalDuration,
+        fallback_reason: finalValidation.errors.slice(0, 2).map(e => e.message).join('; ')
+      });
+    }
+
+    if (finalValidation.warnings.length > 0) {
+      console.warn('[Framing API] Validation warnings:', finalValidation.warnings);
     }
 
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log('[Framing API] Validation passed! Total duration:', totalDuration + 's');
 
-    // Return server-sanitized version (canonical text substituted, never trust model-written SOURCE text)
-    return NextResponse.json({ success: true, data: validation.sanitized, mode: 'live', duration_seconds: totalDuration });
+    return NextResponse.json({ success: true, data: finalValidation.sanitized, mode: 'live', duration_seconds: totalDuration });
   } catch (error: any) {
     const totalDuration = ((Date.now() - startTime) / 1000).toFixed(2);
     console.error('[Framing API] Error after', totalDuration + 's:', error.message);
@@ -312,7 +193,6 @@ Please fix these errors and return valid JSON.`;
       console.error('[Framing API] Stack:', error.stack);
     }
 
-    // Return staged fallback instead of 500 error
     return NextResponse.json({
       success: false,
       data: stagedFraming,

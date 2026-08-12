@@ -200,3 +200,23 @@ export interface LiveFramingResponse {
 // Increment this when LiveFramingResponse structure changes
 export const LIVE_FRAMING_CACHE_VERSION = 'v2';
 export const LIVE_FRAMING_CACHE_KEY = `live-ai-framing-${LIVE_FRAMING_CACHE_VERSION}`;
+
+// Sessionstorage key (sibling to LIVE_FRAMING_CACHE_KEY) holding the project-inputs +
+// professional-baseline key that the cached LiveFramingResponse was generated for.
+// Used to invalidate stale cached/prefetched results when inputs change.
+export const LIVE_FRAMING_CACHE_INPUTS_KEY = `${LIVE_FRAMING_CACHE_KEY}-inputs`;
+
+// Compact live-AI schema: the ONLY thing the model generates for Live AI framing.
+// Everything else (decision framing, project goals, candidate drivers, source text)
+// is server-owned canonical content, assembled around this compact delta.
+export interface CompactFramingResponse {
+  // Investigation priority order among the three canonical variables, highest first.
+  // Must be a permutation of exactly ['A','B','C'].
+  priority_order: ApprovedVariableId[];
+  // One short rationale per variable (why it sits where it does in priority_order).
+  priority_rationale: Partial<Record<ApprovedVariableId, string>>;
+  // At most one interaction worth investigating together, or null if none stands out.
+  interaction?: { variable_ids: ApprovedVariableId[]; rationale: string } | null;
+  // One concise observation about what evidence is still missing.
+  missing_evidence: string;
+}
