@@ -39,3 +39,24 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local development artifacts
+CLAUDE.md
+AGENTS.md
+generated/
+PROJECT_SPEC.md
+DEPLOYMENT_VERIFICATION.md
+FINAL_QA_REPORT.md
+LIVE_AI_UX_FIX.md
+PHASE3A_COMPLETE.md
+PHASE3B_COMPLETE.md
+check_error.mjs
+test_*.mjs
+final_*.mjs
+verify_*.mjs
+test_output.txt
+decision_map*.png
+early_brief.png
+final_result.png
+fix_verification.png
+initial.png

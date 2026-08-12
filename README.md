@@ -1,77 +1,60 @@
 # From Decision to Analysis
 
-A lightweight AI decision layer around the performance tools professionals already trust.
+*A lightweight AI decision layer around the performance tools professionals already trust.*
 
-## Phase 1: Staged-Mode Prototype
+**First-round assignment prototype °™ Scenario B: Building-performance engineer**
 
-This is Phase 1 implementation with deterministic staged content. No live Anthropic API calls, no fabricated simulation results.
+Conceived and built specifically for this assignment as a working exploration of how AI could improve early-stage performance decisions before detailed technical analysis begins.
 
-## What's Included
+## The idea
 
-Complete single-page reviewer journey:
+Early performance work can involve a large space of variables, combinations, constraints, and trade-offs. The prototype uses AI to make that search more intelligent °™ not to replace simulation or professional judgment.
 
-1. **Before AI** ‚Äî Capture baseline plan before AI output
-2. **Read the Work** ‚Äî Load sample project (Chicago office, EnergyPlus model, client brief)
-3. **Decision Map** ‚Äî Current decision, goals, drivers, interactions, assumptions, missing evidence (all tagged: FROM SOURCE / AI INFERENCE / NEEDS EVIDENCE)
-4. **Early Decision Brief** ‚Äî Prioritized hypotheses with transparent reasoning (FOCUS NOW / WATCH / DEFER)
-5. **Smallest Useful Test Set** ‚Äî 8-case 2√ó2√ó2 factorial design with rationale
-6. **Professional Challenge** ‚Äî Accept/Revise/Reject with reason capture
-7. **Real Evidence** ‚Äî Placeholder (no fabricated numbers)
-8. **Evidence-Backed Recommendation** ‚Äî Placeholder (awaiting real simulation)
-9. **Decision Delta** ‚Äî Compare WITHOUT AI vs WITH AI + EVIDENCE
-10. **Practice Signals** ‚Äî Behavioral feedback in localStorage (clear anytime)
-11. **Draft Practice Card** ‚Äî Reviewable pattern card
-12. **Production Path** ‚Äî Footer explaining real deployment requirements
+**AI frames what deserves evidence °˙ trusted simulation produces evidence °˙ the professional decides what the evidence means.**
 
-## Local Development
+## Workflow
 
-```bash
-# Install dependencies
-npm install
+**Read the Work °˙ Decision Map °˙ Early Decision Brief °˙ Smallest Useful Test Set °˙ Professional Challenge °˙ Real Evidence °˙ Evidence-Backed Recommendation °˙ Decision Delta °˙ Practice Signals**
 
-# Run development server
-npm run dev
-```
+The professional can revise or reject the AI framing and remains responsible for what gets simulated and what advances.
 
-Open [http://localhost:3000](http://localhost:3000)
+## What was tested
 
-## Build
+The prototype includes a completed **2°¡2°¡2 EnergyPlus pilot** using three early-stage variables and eight simulation cases.
 
-```bash
-npm run build
-npm start
-```
+The evidence challenged part of the initial framing: the expected window-area °¡ overhang interaction was weak in the tested range, while insulation emerged as a stronger measured energy lever.
 
-## Sample Data
+That reversal is intentional and important:
 
-- `data/5ZoneAirCooled.idf` ‚Äî Public EnergyPlus 26.1 example
-- `data/USA_IL_Chicago-OHare_TMY3.epw` ‚Äî Public Chicago TMY3 weather
-- `data/client-brief.md` ‚Äî Fictional/sanitized project brief
-- `data/evidence.json` ‚Äî (Not included yet; awaiting real EnergyPlus runs)
+**The goal is not to prove that AI guessed correctly. The goal is to let real evidence challenge and reorder the AI framing.**
 
-## Phase 1 Scope
+## Human®CAI boundaries
 
-- ‚úÖ Complete staged-mode UX with deterministic content
-- ‚úÖ All 11 sections of reviewer journey
-- ‚úÖ localStorage-based practice signals
-- ‚úÖ Professional aesthetic (no AI gradients/sparkles)
-- ‚úÖ Source/inference/evidence tagging throughout
-- ‚úÖ Working interactions (load project, challenge AI, adjust priorities)
-- ‚ùå No Anthropic API integration (Phase 2+)
-- ‚ùå No fabricated simulation results
-- ‚ùå No live AI model calls
+- Source facts, AI inference, and evidence are kept distinct.
+- AI can prioritize questions and test directions; it does not act as the simulator.
+- Simulation evidence can change priorities; it does not make the final project decision.
+- Professionals can accept, revise, or reject AI framing.
+- Practice Signals capture workflow behavior, not employee profiling.
+- Completed pilot history is not rewritten by later live AI output.
 
-## Tech Stack
+## Prototype
 
-- Next.js 16 + App Router
-- React 19
-- TypeScript
-- Tailwind CSS 4
+The browser experience contains prepared pilot framing for immediate review, with optional live AI framing and interpretation.
 
-## Design Principles
+EnergyPlus is **not** run on demand in the browser. The pilot evidence was generated locally and bundled into the prototype.
 
-- Professional AEC/consulting aesthetic
-- Restrained neutral palette, strong typography, generous whitespace
-- Polished and built-environment appropriate
-- Intelligent, warm, concise ‚Äî not overconfident
-- Decision-support tool, not autonomous simulator
+## Evidence & reproducibility
+
+- `data/client-brief.md` °™ fictional/sanitized project brief
+- `data/5ZoneAirCooled.idf` °™ public EnergyPlus sample model
+- `data/USA_IL_Chicago-OHare_TMY3.epw` °™ Chicago TMY3 weather file
+- `data/evidence.json` °™ completed pilot evidence
+- `scripts/` °™ scripts used to generate, audit, and verify the simulation study
+
+## Tech
+
+Next.js °§ TypeScript °§ Anthropic-compatible API °§ EnergyPlus °§ Python
+
+---
+
+**Public sample data only. This is an independent assignment prototype, not an M Moser or client project.**
